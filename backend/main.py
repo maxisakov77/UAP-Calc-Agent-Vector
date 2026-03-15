@@ -40,49 +40,6 @@ NAMESPACE_CONTEXT = os.getenv("NAMESPACE_CONTEXT", "ContextLibrary")
 NAMESPACE_KNOWLEDGE = os.getenv("NAMESPACE_KNOWLEDGE", "KnowledgeStore")
 NAMESPACE_PROPERTY = os.getenv("NAMESPACE_PROPERTY", "PropertyContextStore")
 
-DOMAIN_MESSAGE = (
-    "This assistant is configured exclusively for NYC UAP / 485-x building development strategy. "
-    "Ask about a site, zoning, FAR, UAP, 485-x, affordability mix, unit planning, or development profitability."
-)
-DOMAIN_KEYWORDS = {
-    "uap",
-    "485x",
-    "485-x",
-    "zoning",
-    "far",
-    "ami",
-    "affordable",
-    "housing",
-    "residential",
-    "building",
-    "developer",
-    "development",
-    "site",
-    "property",
-    "lot",
-    "block",
-    "bbl",
-    "pluto",
-    "dof",
-    "profit",
-    "profitable",
-    "design",
-    "strategy",
-    "scenario",
-    "tax abatement",
-    "borough",
-    "floor area",
-    "unit mix",
-    "unit",
-    "units",
-    "how many",
-    "rent",
-    "height",
-    "coverage",
-    "setback",
-    "overlay",
-}
-
 # ── Global clients (initialized on startup) ────────────────────────────
 
 openai_client: OpenAI | None = None
@@ -192,16 +149,6 @@ def _get_active_property_context() -> PropertyContext | None:
     except Exception as exc:
         logging.warning(f"Failed to load active property context: {exc}")
         return None
-
-
-def _is_domain_query(query: str, property_context: PropertyContext | None) -> bool:
-    lowered = str(query or "").strip().lower()
-    if not lowered:
-        return False
-    # If a property context is active, treat every message as domain-relevant
-    if property_context is not None:
-        return True
-    return any(keyword in lowered for keyword in DOMAIN_KEYWORDS)
 
 
 # ── Agent Settings ──────────────────────────────────────────────────────
@@ -592,8 +539,6 @@ async def chat(req: ChatRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
     property_context = _get_active_property_context()
-    if not _is_domain_query(sanitized, property_context):
-        return ChatResponse(reply=DOMAIN_MESSAGE, sources=[])
 
     # Run the Multi-Agent System pipeline
     try:
