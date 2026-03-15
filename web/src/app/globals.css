@@ -1,0 +1,237 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-background: var(--bg-main);
+  --color-foreground: var(--foreground);
+}
+
+:root {
+  /* Brand */
+  --brand-cultured: #ebebeb;
+  --brand-white: #ffffff;
+  --brand-granite-gray: #636363;
+  --brand-smoky-black: #111111;
+  --brand-pewter-blue: #9cb2bc;
+  --brand-deep-space-sparkle: #496671;
+  --brand-baby-blue: #78c7ea;
+  --brand-alice-blue: #deedf4;
+
+  /* Backgrounds */
+  --bg-dark: #0a0e10;
+  --bg-main: #111111;
+  --bg-card: rgba(26, 31, 34, 0.85);
+  --bg-elevated: rgba(35, 42, 46, 0.8);
+  --bg-hover: rgba(42, 50, 56, 0.75);
+
+  /* Glass */
+  --glass-light: rgba(120, 199, 234, 0.05);
+  --glass-border: rgba(120, 199, 234, 0.1);
+  --glass-highlight: rgba(222, 237, 244, 0.04);
+
+  /* UI colors */
+  --blue: #496671;
+  --blue-dark: #3a5561;
+  --blue-light: #9cb2bc;
+  --blue-accent: #78c7ea;
+
+  /* Neutrals */
+  --border-color: #2a3238;
+  --header-bg: #1a1f22;
+  --header-border: #2a3238;
+
+  /* Scrollbar */
+  --scrollbar-track: #111111;
+  --scrollbar-thumb: #2a3238;
+  --scrollbar-thumb-hover: #3a4a54;
+
+  /* Theme bridge */
+  --background: #111111;
+  --foreground: #ebebeb;
+
+  color-scheme: dark;
+}
+
+* {
+  border-radius: 0 !important;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg-main);
+  color: var(--foreground);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+/* Glass card */
+.glass-card {
+  background: var(--bg-card);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(12px);
+}
+
+/* Animations */
+.animate-in {
+  animation: fadeIn 0.35s ease both;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Chat bubble typing indicator */
+@keyframes blink {
+  0%,
+  80%,
+  100% {
+    opacity: 0.2;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+
+.typing-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50% !important;
+  background: var(--blue-accent);
+  animation: blink 1.4s infinite both;
+}
+.typing-dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.typing-dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+.assistant-markdown {
+  overflow-wrap: anywhere;
+}
+
+.assistant-markdown > :first-child {
+  margin-top: 0;
+}
+
+.assistant-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.assistant-markdown h1,
+.assistant-markdown h2,
+.assistant-markdown h3,
+.assistant-markdown h4,
+.assistant-markdown h5,
+.assistant-markdown h6 {
+  margin: 1em 0 0.45em;
+  line-height: 1.25;
+  color: var(--brand-white);
+}
+
+.assistant-markdown p,
+.assistant-markdown ul,
+.assistant-markdown ol,
+.assistant-markdown blockquote,
+.assistant-markdown pre,
+.assistant-markdown hr {
+  margin: 0.75em 0;
+}
+
+.assistant-markdown ul,
+.assistant-markdown ol {
+  padding-left: 1.5em;
+}
+
+.assistant-markdown li + li {
+  margin-top: 0.25em;
+}
+
+.assistant-markdown strong {
+  color: var(--brand-white);
+}
+
+.assistant-markdown a {
+  color: var(--blue-accent);
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+.assistant-markdown code {
+  font-family: Consolas, Monaco, "Courier New", monospace;
+}
+
+.assistant-markdown :not(pre) > code {
+  padding: 0.12rem 0.35rem;
+  border: 1px solid var(--glass-border);
+  background: rgba(120, 199, 234, 0.08);
+  color: var(--brand-alice-blue);
+}
+
+.assistant-markdown pre {
+  overflow-x: auto;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--glass-border);
+  background: rgba(10, 14, 16, 0.95);
+}
+
+.assistant-markdown pre code {
+  display: block;
+  white-space: pre;
+}
+
+.assistant-markdown blockquote {
+  padding-left: 1rem;
+  border-left: 3px solid var(--blue);
+  color: var(--blue-light);
+}
+
+.assistant-markdown hr {
+  border: 0;
+  border-top: 1px solid var(--glass-border);
+}
+
+.assistant-table-wrap {
+  overflow-x: auto;
+  margin: 0.75em 0;
+}
+
+.assistant-markdown table {
+  width: 100%;
+  min-width: max-content;
+  border-collapse: collapse;
+}
+
+.assistant-markdown th,
+.assistant-markdown td {
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--glass-border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.assistant-markdown th {
+  color: var(--brand-white);
+  background: rgba(120, 199, 234, 0.08);
+}
