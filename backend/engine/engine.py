@@ -148,7 +148,7 @@ def resolve_dependencies(input_params, state):
 
 # === Context Engine (Main Entry Point) ===
 
-def context_engine(goal, client, pc, index_name, generation_model, embedding_model, namespace_context, namespace_knowledge, agent_settings=None):
+def context_engine(goal, client, pc, index_name, generation_model, embedding_model, namespace_context, namespace_knowledge, agent_settings=None, property_context=None):
     """The main entry point for the Context Engine. Manages Planning and Execution."""
     logging.info(f"--- [Context Engine] Starting --- Goal: {goal}")
     trace = ExecutionTrace(goal)
@@ -181,6 +181,7 @@ def context_engine(goal, client, pc, index_name, generation_model, embedding_mod
                 namespace_context=namespace_context,
                 namespace_knowledge=namespace_knowledge,
                 agent_settings=agent_settings,
+                property_context=property_context,
             )
 
             resolved_input = resolve_dependencies(planned_input, state)

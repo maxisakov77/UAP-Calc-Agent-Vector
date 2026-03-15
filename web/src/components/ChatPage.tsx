@@ -5,11 +5,12 @@ import ChatInput from "./ChatInput";
 import MessageBubble from "./MessageBubble";
 import Sidebar from "./Sidebar";
 import OnboardingGuide from "./OnboardingGuide";
-import type { ChatMessage } from "@/lib/api";
+import type { ChatMessage, PropertyContext } from "@/lib/api";
 import { sendChat } from "@/lib/api";
 
 export default function ChatPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [activeProperty, setActiveProperty] = useState<PropertyContext | null>(null);
   const [sources, setSources] = useState<{ filename: string; distance: number }[]>([]);
   const [loading, setLoading] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -54,7 +55,7 @@ export default function ChatPage() {
             flexDirection: "column",
           }}
         >
-          <Sidebar />
+          <Sidebar onPropertyChange={setActiveProperty} />
         </div>
       )}
 
@@ -82,16 +83,32 @@ export default function ChatPage() {
               fontSize: 14,
             }}
           >
-            {sidebarOpen ? "◀" : "▶"} Docs
+            {sidebarOpen ? "◀" : "▶"} Sidebar
           </button>
           <h1 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: "var(--blue-accent)" }}>
-            UAP Agent Vector
+            UAP 485-x NYC Development Expert
           </h1>
-          {sources.length > 0 && (
-            <span style={{ fontSize: 12, color: "var(--blue-light)", marginLeft: "auto" }}>
-              {sources.length} source{sources.length !== 1 ? "s" : ""} used
-            </span>
-          )}
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            {activeProperty && (
+              <span
+                style={{
+                  fontSize: 11,
+                  color: "var(--foreground)",
+                  padding: "5px 8px",
+                  border: "1px solid rgba(59,130,246,0.25)",
+                  background: "rgba(59,130,246,0.12)",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                Active site: {activeProperty.address || activeProperty.primary_bbl} · {activeProperty.zoning_district || "No zone"}
+              </span>
+            )}
+            {sources.length > 0 && (
+              <span style={{ fontSize: 12, color: "var(--blue-light)" }}>
+                {sources.length} source{sources.length !== 1 ? "s" : ""} used
+              </span>
+            )}
+          </div>
         </header>
 
         {/* Messages */}

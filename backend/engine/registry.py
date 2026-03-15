@@ -17,7 +17,7 @@ class AgentRegistry:
             "Summarizer": agents.agent_summarizer,
         }
 
-    def get_handler(self, agent_name, client, index, generation_model, embedding_model, namespace_context, namespace_knowledge, agent_settings=None):
+    def get_handler(self, agent_name, client, index, generation_model, embedding_model, namespace_context, namespace_knowledge, agent_settings=None, property_context=None):
         """Returns a callable handler for the given agent, with dependencies pre-bound."""
         handler_func = self.registry.get(agent_name)
         if not handler_func:
@@ -36,6 +36,7 @@ class AgentRegistry:
                 generation_model=generation_model, embedding_model=embedding_model,
                 namespace_knowledge=namespace_knowledge,
                 agent_settings=agent_settings,
+                property_context=property_context,
             )
         elif agent_name == "Writer":
             return lambda mcp_message: handler_func(

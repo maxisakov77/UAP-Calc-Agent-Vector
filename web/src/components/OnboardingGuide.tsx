@@ -5,39 +5,47 @@ const steps = [
     number: 1,
     title: "Select a Project",
     description:
-      "Choose an existing Pinecone index or create a new one. Each project is an isolated vector space — documents and conversations stay separate between projects.",
+      "Choose an existing Pinecone index or create a new one. Each project stays isolated so property context, documents, and development strategy remain tied to the right deal.",
     action: "Use the Project dropdown at the top of the sidebar.",
     icon: "📂",
   },
   {
     number: 2,
+    title: "Set the Property",
+    description:
+      "Search an NYC address or 10-digit BBL, then add same-block adjacent lots if the assemblage matters. The app will pull live property and zoning context into the agent workflow.",
+    action: "Use the Property step in the sidebar and confirm the active site.",
+    icon: "🏙️",
+  },
+  {
+    number: 3,
     title: "Upload Documents",
     description:
-      "Add files to build your knowledge base. Supported formats include PDF, DOCX, XLSX, TXT, Markdown, JSON, Python, and many more. Files are automatically chunked and embedded into vectors.",
+      "Add zoning studies, schematics, memos, underwriting notes, and other deal files. They remain available as supporting RAG context for the active property and index.",
     action: 'Click "+ Upload Files" at the bottom of the sidebar.',
     icon: "📄",
   },
   {
-    number: 3,
+    number: 4,
     title: "Set a Blueprint",
     description:
-      "Blueprints are writing instructions that tell the Writer agent how to format and style its responses. You can type a subject and auto-generate one with AI, or write your own.",
+      "Blueprints still control how the Writer presents its answer, but the default behavior is now developer-focused: recommend the strongest UAP / 485-x path, explain why, and flag the constraints.",
     action: "Open the Blueprints section in the sidebar.",
     icon: "📐",
   },
   {
-    number: 4,
+    number: 5,
     title: "Tune Agent Settings",
     description:
-      "Each agent in the pipeline has tunable parameters. Adjust the Librarian's retrieval depth, the Researcher's creativity, or the Writer's temperature to control output style.",
+      "Adjust retrieval depth and temperature if you need a broader or tighter analysis. The multi-agent setup stays intact: Librarian, Researcher, and Writer still collaborate behind the scenes.",
     action: "Expand Agent Settings and move the sliders.",
     icon: "⚙️",
   },
   {
-    number: 5,
+    number: 6,
     title: "Ask a Question",
     description:
-      "Type your question below. The multi-agent system will plan the task, retrieve relevant context from your documents, research an answer, and compose a final response.",
+      "Ask what should be built, which scenario is most profitable, how UAP / 485-x changes the envelope, or where the risk sits. The system will blend live property data with your uploaded materials.",
     action: "Type in the chat input and press Enter.",
     icon: "💬",
   },
@@ -67,7 +75,7 @@ export default function OnboardingGuide() {
           lineHeight: 1.5,
         }}
       >
-        Follow these steps to set up your workspace and start chatting with your documents.
+        Set the site, load supporting materials, and ask for the strongest NYC UAP / 485-x development strategy.
       </p>
 
       {/* Steps */}
@@ -229,8 +237,8 @@ export default function OnboardingGuide() {
             lineHeight: 1.5,
           }}
         >
-          Your question flows through each agent: planning the task, retrieving context, researching
-          an answer, and composing the final response.
+          Each question is planned, grounded in live site context and uploaded project documents,
+          then turned into a profit-oriented development recommendation.
         </p>
       </div>
     </div>

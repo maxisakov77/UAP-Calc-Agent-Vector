@@ -1,6 +1,6 @@
 """
-UAP Agent Vector — FastAPI backend powered by Multi-Agent System.
-Uses Pinecone vector DB + GPT-5.4 + 4 specialist agents (Librarian, Researcher, Writer, Summarizer).
+NYC UAP / 485-x development strategy backend.
+Uses Pinecone RAG + GPT multi-agent orchestration to evaluate zoning, site context, and developer-oriented scenarios.
 """
 
 import os
@@ -9,7 +9,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
 from pinecone import Pinecone, ServerlessSpec
@@ -17,6 +17,15 @@ from pydantic import BaseModel
 
 from engine.engine import context_engine
 from engine.helpers import helper_sanitize_input, helper_moderate_content, get_embedding
+from property_models import (
+    BlockLotsResponse,
+    PropertyContext,
+    PropertyContextRequest,
+    PropertySearchResponse,
+    ValidatedLotInfo,
+)
+from property_service import property_service
+from property_store import delete_property_context, fetch_property_context, upsert_property_context
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
 
@@ -29,6 +38,42 @@ EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-large")
 PINECONE_INDEX = os.getenv("PINECONE_INDEX", "genai-mas-mcp-ch3")
 NAMESPACE_CONTEXT = os.getenv("NAMESPACE_CONTEXT", "ContextLibrary")
 NAMESPACE_KNOWLEDGE = os.getenv("NAMESPACE_KNOWLEDGE", "KnowledgeStore")
+NAMESPACE_PROPERTY = os.getenv("NAMESPACE_PROPERTY", "PropertyContextStore")
+
+DOMAIN_MESSAGE = (
+    "This assistant is configured exclusively for NYC UAP / 485-x building development strategy. "
+    "Ask about a site, zoning, FAR, UAP, 485-x, affordability mix, unit planning, or development profitability."
+)
+DOMAIN_KEYWORDS = {
+    "uap",
+    "485x",
+    "485-x",
+    "zoning",
+    "far",
+    "ami",
+    "affordable",
+    "housing",
+    "residential",
+    "building",
+    "developer",
+    "development",
+    "site",
+    "property",
+    "lot",
+    "block",
+    "bbl",
+    "pluto",
+    "dof",
+    "profit",
+    "profitable",
+    "design",
+    "strategy",
+    "scenario",
+    "tax abatement",
+    "borough",
+    "floor area",
+    "unit mix",
+}
 
 # ── Global clients (initialized on startup) ────────────────────────────
 
@@ -101,7 +146,7 @@ async def lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="UAP Agent Vector API", lifespan=lifespan)
+app = FastAPI(title="UAP 485-x NYC Development Expert API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -127,6 +172,42 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     reply: str
     sources: list[dict]
+
+
+def _get_index():
+    return pinecone_client.Index(active_index_name)
+
+
+def _get_active_property_context() -> PropertyContext | None:
+    try:
+        return fetch_property_context(_get_index(), NAMESPACE_PROPERTY)
+    except Exception as exc:
+        logging.warning(f"Failed to load active property context: {exc}")
+        return None
+
+
+def _is_domain_query(query: str, property_context: PropertyContext | None) -> bool:
+    lowered = str(query or "").strip().lower()
+    if not lowered:
+        return False
+    if any(keyword in lowered for keyword in DOMAIN_KEYWORDS):
+        return True
+    if property_context is None:
+        return False
+    site_context_terms = {
+        "this site",
+        "this property",
+        "this lot",
+        "what should we build",
+        "best option",
+        "best development",
+        "best strategy",
+        "recommend",
+        "design",
+        "scheme",
+        "project",
+    }
+    return any(term in lowered for term in site_context_terms)
 
 
 # ── Agent Settings ──────────────────────────────────────────────────────
@@ -272,6 +353,84 @@ async def switch_index(req: SwitchIndexRequest):
     return {"active": active_index_name}
 
 
+# ── Live Property Context ───────────────────────────────────────────────
+
+@app.get("/api/property/search-address", response_model=PropertySearchResponse)
+async def search_property_address(q: str = Query("", description="NYC address or 10-digit BBL")):
+    try:
+        results = await property_service.search_address(q)
+        return PropertySearchResponse(results=results, query=q)
+    except Exception as exc:
+        logging.error(f"Property address search failed: {exc}")
+        raise HTTPException(status_code=500, detail=f"Address search failed: {exc}")
+
+
+@app.get("/api/property/validate-lot", response_model=ValidatedLotInfo)
+async def validate_property_lot(bbl: str = Query(..., description="10-digit BBL")):
+    try:
+        result = await property_service.validate_lot(bbl)
+        return ValidatedLotInfo(**result)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc:
+        logging.error(f"Property lot validation failed: {exc}")
+        raise HTTPException(status_code=500, detail=f"Lot validation failed: {exc}")
+
+
+@app.get("/api/property/block-lots", response_model=BlockLotsResponse)
+async def get_property_block_lots(
+    borough: int = Query(..., ge=1, le=5, description="Borough code (1-5)"),
+    block: int = Query(..., gt=0, description="Tax block"),
+):
+    try:
+        result = await property_service.get_block_lots(borough, block)
+        return BlockLotsResponse(**result)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logging.error(f"Property block lookup failed: {exc}")
+        raise HTTPException(status_code=500, detail=f"Block lot lookup failed: {exc}")
+
+
+@app.put("/api/property/context", response_model=PropertyContext)
+async def set_property_context(req: PropertyContextRequest):
+    try:
+        context = await property_service.build_property_context(req.primary_bbl, req.adjacent_bbls)
+        embedding = get_embedding(context.property_brief, client=openai_client, embedding_model=EMBEDDING_MODEL)
+        upsert_property_context(_get_index(), NAMESPACE_PROPERTY, embedding, context)
+        logging.info(f"Stored active property context for index '{active_index_name}': {context.primary_bbl}")
+        return context
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc:
+        logging.error(f"Set property context failed: {exc}")
+        raise HTTPException(status_code=500, detail=f"Property context update failed: {exc}")
+
+
+@app.get("/api/property/context", response_model=PropertyContext | None)
+async def get_property_context():
+    try:
+        return _get_active_property_context()
+    except Exception as exc:
+        logging.error(f"Get property context failed: {exc}")
+        raise HTTPException(status_code=500, detail=f"Property context lookup failed: {exc}")
+
+
+@app.delete("/api/property/context")
+async def clear_property_context():
+    try:
+        delete_property_context(_get_index(), NAMESPACE_PROPERTY)
+        logging.info(f"Cleared active property context for index '{active_index_name}'")
+        return {"cleared": True}
+    except Exception as exc:
+        logging.error(f"Clear property context failed: {exc}")
+        raise HTTPException(status_code=500, detail=f"Property context clear failed: {exc}")
+
+
 # ── Blueprint Management (ContextLibrary) ───────────────────────────────
 
 class CreateBlueprintRequest(BaseModel):
@@ -284,9 +443,11 @@ async def list_blueprints():
     """List all blueprints in the ContextLibrary namespace."""
     try:
         idx = pinecone_client.Index(active_index_name)
+        stats = idx.describe_index_stats()
+        dim = stats.get("dimension", 3072) or 3072
         # Fetch all vectors in ContextLibrary using a zero-vector query
         # (Pinecone doesn't have a "list" — we query with a dummy and high top_k)
-        dummy_vec = [0.0] * 3072
+        dummy_vec = [0.0] * int(dim)
         results = idx.query(
             vector=dummy_vec,
             top_k=100,
@@ -351,12 +512,12 @@ async def generate_blueprint(req: GenerateBlueprintRequest):
     try:
         # Generate instructions via GPT
         system_prompt = (
-            "You are an expert at writing concise, actionable blueprint instructions "
-            "for an AI Writer agent. Given a subject domain, produce a set of instructions "
-            "that tell the Writer how to format, structure, and tone its responses for that domain.\n\n"
-            "Include: expected tone, structure/formatting rules, key terminology guidance, "
-            "level of detail, audience assumptions, and any domain-specific best practices.\n\n"
-            "Be specific and practical — not generic. Output ONLY the instructions, no preamble."
+            "You are writing blueprint instructions for an AI Writer that is exclusively focused on "
+            "NYC UAP / 485-x building development strategy. Given a subject domain, produce instructions "
+            "for how the Writer should format, structure, and tone responses inside that NYC development context.\n\n"
+            "Include: developer-first tone, response structure, terminology guidance, profitability framing, "
+            "assumption handling, and how to cite source-grounded constraints.\n\n"
+            "Be specific and practical. Output ONLY the instructions, no preamble."
         )
         response = openai_client.chat.completions.create(
             model=GENERATION_MODEL,
@@ -436,6 +597,10 @@ async def chat(req: ChatRequest):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    property_context = _get_active_property_context()
+    if not _is_domain_query(sanitized, property_context):
+        return ChatResponse(reply=DOMAIN_MESSAGE, sources=[])
+
     # Run the Multi-Agent System pipeline
     try:
         result, trace = context_engine(
@@ -448,6 +613,7 @@ async def chat(req: ChatRequest):
             namespace_context=NAMESPACE_CONTEXT,
             namespace_knowledge=NAMESPACE_KNOWLEDGE,
             agent_settings=agent_settings,
+            property_context=property_context.model_dump() if property_context else None,
         )
     except Exception as e:
         logging.error(f"Context engine error: {e}")

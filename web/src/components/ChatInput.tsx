@@ -50,7 +50,7 @@ export default function ChatInput({ onSend, disabled }: ChatInputProps) {
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={handleKeyDown}
         onInput={handleInput}
-        placeholder="Ask about your documents..."
+        placeholder="Ask about the site, zoning, UAP, 485-x, or the best development strategy..."
         disabled={disabled}
         rows={1}
         style={{

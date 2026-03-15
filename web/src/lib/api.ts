@@ -143,6 +143,110 @@ export interface ActiveIndexResponse {
   namespaces: Record<string, { vector_count: number }>;
 }
 
+export interface PropertySearchResult {
+  bbl: string;
+  address: string;
+  borough: string;
+  zone: string;
+  overlay: string;
+  lotArea: number;
+  builtFar: number;
+  numFloors: number;
+  yearBuilt: number;
+  bldgClass: string;
+  lat: number;
+  lng: number;
+}
+
+export interface ValidatedLotInfo {
+  bbl: string;
+  address: string;
+  lotArea: number;
+  zone: string;
+}
+
+export interface BlockLotInfo {
+  lot: number;
+  address: string;
+  lotArea: number;
+  zone: string;
+}
+
+export interface PropertyScenario {
+  code: string;
+  label: string;
+  max_res_floor_area: number;
+  max_number_of_units: number;
+  affordable_floor_area: number;
+  affordable_floor_area_uap: number;
+  affordable_floor_area_485x: number;
+  affordable_units_percentage: number;
+  affordable_units_total: number;
+  market_rate_units: number;
+  ami_breakdown: { ami: number; units: number }[];
+  triggers_prevailing_wages: boolean;
+  triggers_40_ami: boolean;
+  is_uap_eligible: boolean;
+  available: boolean;
+  notes: string[];
+}
+
+export interface PropertyLotRecord {
+  bbl: string;
+  borough: string;
+  block: string;
+  lot: string;
+  address: string;
+  zoning: string;
+  overlay1?: string | null;
+  overlay2?: string | null;
+  lot_area: number;
+  building_area: number;
+  res_far: number;
+  units_total: number;
+  year_built?: number | null;
+  assessed_value?: number | null;
+  market_value?: number | null;
+  dof_taxable?: number | null;
+  has_pluto: boolean;
+  has_dof: boolean;
+  lot_type_code?: number | null;
+  lot_type: string;
+}
+
+export interface PropertyContext {
+  primary_bbl: string;
+  adjacent_bbls: string[];
+  selected_bbls: string[];
+  address: string;
+  borough: string;
+  block: string;
+  lots: string[];
+  zoning_district: string;
+  overlay: string;
+  overlay_far?: number | null;
+  community_facility_far?: number | null;
+  standard_far?: number | null;
+  qah_far?: number | null;
+  standard_height_limit?: number | null;
+  qah_height_limit?: number | null;
+  lot_coverage_corner?: number | null;
+  lot_coverage_interior?: number | null;
+  street_type_assumption: string;
+  has_narrow_wide: boolean;
+  lot_type: string;
+  lot_area: number;
+  building_area: number;
+  units_total: number;
+  assessed_value?: number | null;
+  market_value?: number | null;
+  dof_taxable?: number | null;
+  scenarios: PropertyScenario[];
+  lots_detail: PropertyLotRecord[];
+  sources: Record<string, unknown>;
+  property_brief: string;
+}
+
 export async function listIndexes(): Promise<IndexListResponse> {
   const res = await apiFetch(`${API_BASE}/api/indexes`);
   if (!res.ok) throw new Error(`Failed to list indexes (${res.status})`);
@@ -194,6 +298,67 @@ export async function switchIndex(name: string): Promise<{ active: string }> {
   if (!res.ok) {
     const detail = await res.text();
     throw new Error(`Switch index failed (${res.status}): ${detail}`);
+  }
+  return res.json();
+}
+
+export async function searchPropertyAddress(query: string): Promise<PropertySearchResult[]> {
+  const res = await apiFetch(`${API_BASE}/api/property/search-address?q=${encodeURIComponent(query)}`);
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`Property search failed (${res.status}): ${detail}`);
+  }
+  const payload = await res.json();
+  return Array.isArray(payload.results) ? payload.results : [];
+}
+
+export async function validatePropertyLot(bbl: string): Promise<ValidatedLotInfo> {
+  const res = await apiFetch(`${API_BASE}/api/property/validate-lot?bbl=${encodeURIComponent(bbl)}`);
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`Lot validation failed (${res.status}): ${detail}`);
+  }
+  return res.json();
+}
+
+export async function getBlockLots(borough: number, block: number): Promise<BlockLotInfo[]> {
+  const qp = new URLSearchParams({ borough: String(borough), block: String(block) });
+  const res = await apiFetch(`${API_BASE}/api/property/block-lots?${qp.toString()}`);
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`Block lot lookup failed (${res.status}): ${detail}`);
+  }
+  const payload = await res.json();
+  return Array.isArray(payload.lots) ? payload.lots : [];
+}
+
+export async function setPropertyContext(primaryBbl: string, adjacentBbls: string[] = []): Promise<PropertyContext> {
+  const res = await apiFetch(`${API_BASE}/api/property/context`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ primary_bbl: primaryBbl, adjacent_bbls: adjacentBbls }),
+  });
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`Set property context failed (${res.status}): ${detail}`);
+  }
+  return res.json();
+}
+
+export async function getPropertyContext(): Promise<PropertyContext | null> {
+  const res = await apiFetch(`${API_BASE}/api/property/context`);
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`Get property context failed (${res.status}): ${detail}`);
+  }
+  return res.json();
+}
+
+export async function clearPropertyContext(): Promise<{ cleared: boolean }> {
+  const res = await apiFetch(`${API_BASE}/api/property/context`, { method: "DELETE" });
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`Clear property context failed (${res.status}): ${detail}`);
   }
   return res.json();
 }

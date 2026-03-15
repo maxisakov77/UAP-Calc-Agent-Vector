@@ -1,12 +1,17 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { listDocuments, uploadDocument, deleteDocument, type DocumentInfo } from "@/lib/api";
+import { listDocuments, uploadDocument, deleteDocument, type DocumentInfo, type PropertyContext } from "@/lib/api";
 import IndexManager from "./IndexManager";
+import PropertyWizard from "./PropertyWizard";
 import BlueprintManager from "./BlueprintManager";
 import AgentSettings from "./AgentSettings";
 
-export default function Sidebar() {
+export default function Sidebar({
+  onPropertyChange,
+}: {
+  onPropertyChange?: (context: PropertyContext | null) => void;
+}) {
   const [documents, setDocuments] = useState<DocumentInfo[]>([]);
   const [totalChunks, setTotalChunks] = useState(0);
   const [uploading, setUploading] = useState(false);
@@ -71,8 +76,14 @@ export default function Sidebar() {
 
       <SectionDivider />
 
-      {/* Step 2 — Documents */}
-      <StepLabel number={2} guide="Upload files to build the knowledge base for this project" />
+      {/* Step 2 — Property */}
+      <StepLabel number={2} guide="Select the NYC site and optional same-block lots for live UAP / 485-x context" />
+      <PropertyWizard refreshKey={refreshKey} onPropertyChange={onPropertyChange} />
+
+      <SectionDivider />
+
+      {/* Step 3 — Documents */}
+      <StepLabel number={3} guide="Upload files to build the knowledge base for this project" />
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         <div>
           <h2
@@ -180,14 +191,14 @@ export default function Sidebar() {
 
       <SectionDivider />
 
-      {/* Step 3 — Blueprints */}
-      <StepLabel number={3} guide="Define how the Writer agent formats and styles responses" />
+      {/* Step 4 — Blueprints */}
+      <StepLabel number={4} guide="Define how the Writer agent formats and styles responses" />
       <BlueprintManager refreshKey={refreshKey} />
 
       <SectionDivider />
 
-      {/* Step 4 — Agent Settings */}
-      <StepLabel number={4} guide="Fine-tune retrieval depth, temperature, and other params" />
+      {/* Step 5 — Agent Settings */}
+      <StepLabel number={5} guide="Fine-tune retrieval depth, temperature, and other params" />
       <AgentSettings />
     </div>
   );

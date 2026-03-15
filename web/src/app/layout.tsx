@@ -6,8 +6,8 @@ const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "UAP Agent Vector",
-  description: "OpenAI ChatKit powered by vector database RAG",
+  title: "UAP 485-x NYC Development Expert",
+  description: "NYC zoning, UAP, and 485-x development strategy assistant with live property context and document-grounded recommendations.",
 };
 
 export default function RootLayout({
