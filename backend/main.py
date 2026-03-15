@@ -61,7 +61,7 @@ agent_settings: dict = {
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    global openai_client, pinecone_client
+    global openai_client, pinecone_client, active_index_name
 
     openai_key = os.getenv("OPENAI_API_KEY", "")
     pinecone_key = os.getenv("PINECONE_API_KEY", "")
@@ -74,14 +74,28 @@ async def lifespan(_app: FastAPI):
     openai_client = OpenAI(api_key=openai_key)
     pinecone_client = Pinecone(api_key=pinecone_key)
 
-    # Verify Pinecone index exists
+    # Verify Pinecone index exists; auto-switch if the configured one is gone
     try:
         idx = pinecone_client.Index(active_index_name)
         stats = idx.describe_index_stats()
         total_vectors = stats.get("total_vector_count", 0)
         logging.info(f"✅ Pinecone connected: index={active_index_name}, vectors={total_vectors}")
     except Exception as e:
-        logging.error(f"Pinecone connection failed: {e}")
+        logging.warning(f"Configured index '{active_index_name}' not reachable: {e}")
+        # Try to fall back to the first available index
+        try:
+            available = pinecone_client.list_indexes()
+            if available:
+                first = available[0].name
+                active_index_name = first
+                idx = pinecone_client.Index(active_index_name)
+                stats = idx.describe_index_stats()
+                total_vectors = stats.get("total_vector_count", 0)
+                logging.info(f"✅ Auto-switched to index '{active_index_name}', vectors={total_vectors}")
+            else:
+                logging.warning("No Pinecone indexes available")
+        except Exception as e2:
+            logging.error(f"Failed to auto-switch index: {e2}")
 
     logging.info(f"✅ MAS Backend ready — model={GENERATION_MODEL}, embedding={EMBEDDING_MODEL}")
     yield

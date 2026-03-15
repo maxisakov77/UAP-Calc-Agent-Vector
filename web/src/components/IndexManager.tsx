@@ -26,10 +26,16 @@ export default function IndexManager({ onSwitch }: { onSwitch?: () => void }) {
 
   async function refresh() {
     try {
-      const [listRes, statsRes] = await Promise.all([listIndexes(), getActiveIndex()]);
+      const listRes = await listIndexes();
       setIndexes(listRes.indexes);
       setActive(listRes.active);
-      setActiveStats(statsRes);
+      try {
+        const statsRes = await getActiveIndex();
+        setActiveStats(statsRes);
+      } catch {
+        // Active index may not exist yet — still show the list
+        setActiveStats(null);
+      }
       setError("");
     } catch {
       setError("Failed to load indexes");
