@@ -73,6 +73,14 @@ DOMAIN_KEYWORDS = {
     "borough",
     "floor area",
     "unit mix",
+    "unit",
+    "units",
+    "how many",
+    "rent",
+    "height",
+    "coverage",
+    "setback",
+    "overlay",
 }
 
 # ── Global clients (initialized on startup) ────────────────────────────
@@ -190,24 +198,10 @@ def _is_domain_query(query: str, property_context: PropertyContext | None) -> bo
     lowered = str(query or "").strip().lower()
     if not lowered:
         return False
-    if any(keyword in lowered for keyword in DOMAIN_KEYWORDS):
+    # If a property context is active, treat every message as domain-relevant
+    if property_context is not None:
         return True
-    if property_context is None:
-        return False
-    site_context_terms = {
-        "this site",
-        "this property",
-        "this lot",
-        "what should we build",
-        "best option",
-        "best development",
-        "best strategy",
-        "recommend",
-        "design",
-        "scheme",
-        "project",
-    }
-    return any(term in lowered for term in site_context_terms)
+    return any(keyword in lowered for keyword in DOMAIN_KEYWORDS)
 
 
 # ── Agent Settings ──────────────────────────────────────────────────────
