@@ -1,0 +1,9 @@
+# UAP Agent Vector
+node_modules/
+.next/
+__pycache__/
+*.pyc
+chroma_data/
+vector_data/
+.env
+.env.local
