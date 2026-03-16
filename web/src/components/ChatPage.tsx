@@ -12,7 +12,7 @@ import { sendChat } from "@/lib/api";
 export default function ChatPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [activeProperty, setActiveProperty] = useState<PropertyContext | null>(null);
-  const [sources, setSources] = useState<{ filename: string; distance: number }[]>([]);
+  const [sources, setSources] = useState<{ filename: string; distance: number; source_type?: "property" | "document" }[]>([]);
   const [loading, setLoading] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mode, setMode] = useState<"chat" | "underwriting">("chat");
@@ -152,9 +152,40 @@ export default function ChatPage() {
               </span>
             )}
             {sources.length > 0 && (
-              <span style={{ fontSize: 12, color: "var(--blue-light)" }}>
-                {sources.length} source{sources.length !== 1 ? "s" : ""} used
-              </span>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                {sources.slice(0, 4).map((source) => {
+                  const isProperty = source.source_type === "property";
+                  const accent = isProperty ? "#14b8a6" : "#22c55e";
+                  const background = isProperty ? "rgba(20,184,166,0.12)" : "rgba(34,197,94,0.12)";
+                  const border = isProperty ? "rgba(20,184,166,0.25)" : "rgba(34,197,94,0.25)";
+                  return (
+                    <span
+                      key={source.filename}
+                      title={source.filename}
+                      style={{
+                        fontSize: 11,
+                        color: "var(--foreground)",
+                        padding: "5px 8px",
+                        border: `1px solid ${border}`,
+                        background,
+                        whiteSpace: "nowrap",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 6,
+                        maxWidth: 260,
+                      }}
+                    >
+                      <span style={{ width: 7, height: 7, borderRadius: "50%", background: accent, display: "inline-block", flexShrink: 0 }} />
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {isProperty ? "Live property" : source.filename}
+                      </span>
+                    </span>
+                  );
+                })}
+                {sources.length > 4 && (
+                  <span style={{ fontSize: 11, color: "var(--blue-light)" }}>+{sources.length - 4} more</span>
+                )}
+              </div>
             )}
           </div>
         </header>

@@ -241,3 +241,180 @@ body {
   color: var(--brand-white);
   background: rgba(120, 199, 234, 0.08);
 }
+
+.underwriting-grid-shell {
+  flex: 1;
+  min-height: 0;
+  padding: 0;
+  background:
+    linear-gradient(rgba(120, 199, 234, 0.02), rgba(120, 199, 234, 0.02)),
+    var(--bg-main);
+}
+
+.underwriting-grid-scroll {
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+}
+
+.underwriting-grid-table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+  background: rgba(9, 13, 15, 0.92);
+}
+
+.underwriting-grid-corner,
+.underwriting-grid-column-header,
+.underwriting-grid-row-header {
+  position: sticky;
+  color: var(--blue-light);
+  background: rgba(16, 22, 25, 0.98);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-align: center;
+  backdrop-filter: blur(10px);
+}
+
+.underwriting-grid-corner,
+.underwriting-grid-column-header,
+.underwriting-grid-row-header,
+.underwriting-grid-cell {
+  border-right: 1px solid rgba(120, 199, 234, 0.08);
+  border-bottom: 1px solid rgba(120, 199, 234, 0.08);
+}
+
+.underwriting-grid-corner {
+  top: 0;
+  left: 0;
+  z-index: 4;
+  width: 56px;
+  min-width: 56px;
+  border-right-color: rgba(120, 199, 234, 0.12);
+  border-bottom-color: rgba(120, 199, 234, 0.14);
+}
+
+.underwriting-grid-column-header {
+  top: 0;
+  z-index: 3;
+  min-width: 112px;
+  height: 38px;
+  box-shadow: inset 0 -1px 0 rgba(120, 199, 234, 0.12);
+}
+
+.underwriting-grid-row-header {
+  left: 0;
+  z-index: 2;
+  width: 56px;
+  min-width: 56px;
+  box-shadow: inset -1px 0 0 rgba(120, 199, 234, 0.12);
+}
+
+.underwriting-grid-cell {
+  min-width: 112px;
+  padding: 0;
+  background: rgba(14, 18, 21, 0.92);
+  color: var(--foreground);
+  vertical-align: top;
+  transition:
+    background 120ms ease,
+    box-shadow 120ms ease,
+    border-color 120ms ease;
+}
+
+.underwriting-grid-cell-empty {
+  background:
+    linear-gradient(rgba(120, 199, 234, 0.015), rgba(120, 199, 234, 0.015)),
+    rgba(10, 14, 16, 0.88);
+}
+
+.underwriting-grid-cell-label {
+  background: rgba(22, 28, 31, 0.94);
+  color: var(--brand-white);
+  font-weight: 600;
+}
+
+.underwriting-grid-cell-value {
+  text-align: right;
+}
+
+.underwriting-grid-cell-formula {
+  background: rgba(28, 34, 38, 0.92);
+  color: var(--brand-granite-gray);
+}
+
+.underwriting-grid-cell-edited {
+  background: rgba(34, 197, 94, 0.08);
+}
+
+.underwriting-grid-cell-ai {
+  background: rgba(59, 130, 246, 0.12);
+}
+
+.underwriting-grid-cell-active {
+  position: relative;
+  z-index: 1;
+  background: rgba(120, 199, 234, 0.12);
+  box-shadow: inset 0 0 0 2px rgba(120, 199, 234, 0.65);
+}
+
+.underwriting-grid-cell-view,
+.underwriting-grid-button,
+.underwriting-grid-input {
+  display: block;
+  width: 100%;
+  min-height: 34px;
+  padding: 7px 10px;
+  box-sizing: border-box;
+  font-size: 12px;
+  line-height: 1.35;
+  color: inherit;
+  text-align: inherit;
+}
+
+.underwriting-grid-cell-view {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.underwriting-grid-cell-label .underwriting-grid-cell-view,
+.underwriting-grid-cell-label .underwriting-grid-button {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.underwriting-grid-button {
+  border: none;
+  background: transparent;
+  cursor: text;
+  font: inherit;
+}
+
+.underwriting-grid-button:hover {
+  background: rgba(120, 199, 234, 0.04);
+}
+
+.underwriting-grid-button:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px rgba(120, 199, 234, 0.45);
+}
+
+.underwriting-grid-input {
+  border: none;
+  outline: none;
+  background: rgba(8, 12, 14, 0.92);
+  font: inherit;
+}
+
+.underwriting-grid-cell-value .underwriting-grid-cell-view,
+.underwriting-grid-cell-value .underwriting-grid-button,
+.underwriting-grid-cell-value .underwriting-grid-input {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}

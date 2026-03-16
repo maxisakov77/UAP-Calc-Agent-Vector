@@ -594,9 +594,11 @@ async def chat(req: ChatRequest):
     formatted_sources = []
     for s in sources[:10]:
         if isinstance(s, dict):
+            source_name = s.get("source", "Pinecone")
             formatted_sources.append({
-                "filename": s.get("source", "Pinecone"),
+                "filename": source_name,
                 "distance": round(1 - s.get("score", 0), 4),
+                "source_type": "property" if str(source_name).startswith("Active Property Context") else "document",
             })
 
     return ChatResponse(reply=reply_text, sources=formatted_sources)

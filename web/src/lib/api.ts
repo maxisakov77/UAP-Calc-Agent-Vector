@@ -27,7 +27,7 @@ export interface ChatMessage {
 
 export interface ChatResponse {
   reply: string;
-  sources: { filename: string; distance: number }[];
+  sources: { filename: string; distance: number; source_type?: "property" | "document" }[];
 }
 
 export interface DocumentInfo {

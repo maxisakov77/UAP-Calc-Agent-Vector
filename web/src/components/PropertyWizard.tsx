@@ -46,7 +46,9 @@ export default function PropertyWizard({
   const [loadingLots, setLoadingLots] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [error, setError] = useState("");
+  const [autoFilled, setAutoFilled] = useState<{ address: string; bbl: string } | null>(null);
   const debounceRef = useRef<number | null>(null);
+  const autoFillTimerRef = useRef<number | null>(null);
 
   function setActiveContext(next: PropertyContext | null) {
     setActiveContextState(next);
@@ -112,6 +114,9 @@ export default function PropertyWizard({
       setError(nextResults.length === 0 ? "No results. Try a full NYC address or 10-digit BBL." : "");
       if (nextResults.length === 1) {
         await applyProperty(nextResults[0].bbl, []);
+        setAutoFilled({ address: nextResults[0].address || "Unknown", bbl: nextResults[0].bbl });
+        if (autoFillTimerRef.current) window.clearTimeout(autoFillTimerRef.current);
+        autoFillTimerRef.current = window.setTimeout(() => setAutoFilled(null), 6000);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Property search failed");
@@ -285,6 +290,31 @@ export default function PropertyWizard({
         </button>
       </div>
 
+      {autoFilled && (
+        <div
+          style={{
+            margin: 0,
+            fontSize: 12,
+            color: "#34d399",
+            padding: "6px 8px",
+            background: "rgba(52,211,153,0.1)",
+            border: "1px solid rgba(52,211,153,0.25)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 8,
+          }}
+        >
+          <span>Auto-filled: <strong>{autoFilled.address}</strong> (BBL {autoFilled.bbl})</span>
+          <button
+            onClick={() => setAutoFilled(null)}
+            style={{ background: "none", border: "none", color: "inherit", cursor: "pointer", padding: 0, fontSize: 14, lineHeight: 1 }}
+          >
+            ×
+          </button>
+        </div>
+      )}
+
       {error && (
         <p
           style={{
@@ -334,14 +364,23 @@ export default function PropertyWizard({
             </div>
             <div style={{ fontSize: 11, color: "var(--brand-granite-gray)", lineHeight: 1.5 }}>
               {activeContext.borough} · BBL {activeContext.primary_bbl} · Zone {activeContext.zoning_district || "N/A"} · {activeContext.lot_area.toLocaleString()} SF lot area
+              <span style={{ display: "inline-block", marginLeft: 4, width: 7, height: 7, borderRadius: "50%", background: "#14b8a6", verticalAlign: "middle" }} title="PLUTO" />
             </div>
           </div>
 
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, fontSize: 10, color: "var(--brand-granite-gray)" }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#14b8a6", display: "inline-block" }} /> PLUTO</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#f59e0b", display: "inline-block" }} /> DOF</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#a78bfa", display: "inline-block" }} /> Zoning Ref</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#3b82f6", display: "inline-block" }} /> Calculated</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#22c55e", display: "inline-block" }} /> Documents</span>
+          </div>
+
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 11 }}>
-            <Metric label="Standard FAR" value={activeContext.standard_far?.toFixed(2) ?? "N/A"} />
-            <Metric label="UAP / QAH FAR" value={activeContext.qah_far?.toFixed(2) ?? "N/A"} />
-            <Metric label="Mkt Value" value={fmtCurrency(activeContext.market_value)} />
-            <Metric label="Taxable" value={fmtCurrency(activeContext.dof_taxable)} />
+            <Metric label="Standard FAR" value={activeContext.standard_far?.toFixed(2) ?? "N/A"} source="zoning" />
+            <Metric label="UAP / QAH FAR" value={activeContext.qah_far?.toFixed(2) ?? "N/A"} source="zoning" />
+            <Metric label="Mkt Value" value={fmtCurrency(activeContext.market_value)} source="dof" />
+            <Metric label="Taxable" value={fmtCurrency(activeContext.dof_taxable)} source="dof" />
           </div>
 
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
@@ -472,8 +511,9 @@ export default function PropertyWizard({
 
           {candidateScenarios.length > 0 && (
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              <div style={{ fontSize: 11, fontWeight: 600, color: "var(--blue-accent)", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 600, color: "var(--blue-accent)", textTransform: "uppercase", letterSpacing: "0.04em" }}>
                 Scenario Candidates
+                <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#3b82f6", display: "inline-block" }} title="Calculated" />
               </div>
               {candidateScenarios.map((scenario) => (
                 <div
@@ -504,9 +544,17 @@ export default function PropertyWizard({
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+const SOURCE_COLORS: Record<string, string> = {
+  pluto: "#14b8a6",
+  dof: "#f59e0b",
+  zoning: "#a78bfa",
+  calc: "#3b82f6",
+};
+
+function Metric({ label, value, source }: { label: string; value: string; source?: keyof typeof SOURCE_COLORS }) {
+  const dotColor = source ? SOURCE_COLORS[source] : undefined;
   return (
-    <div style={{ padding: "6px 8px", background: "var(--bg-elevated)", border: "1px solid var(--border-color)" }}>
+    <div style={{ padding: "6px 8px", background: "var(--bg-elevated)", border: "1px solid var(--border-color)", borderLeft: dotColor ? `3px solid ${dotColor}` : undefined }}>
       <div style={{ color: "var(--brand-granite-gray)", marginBottom: 2 }}>{label}</div>
       <div style={{ color: "var(--foreground)", fontWeight: 600 }}>{value}</div>
     </div>
