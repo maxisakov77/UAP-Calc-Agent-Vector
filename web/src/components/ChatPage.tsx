@@ -26,6 +26,18 @@ export default function ChatPage() {
     setActiveProperty(null);
   }
 
+  function handlePropertyChange(context: PropertyContext | null) {
+    // Clear stale chat when switching to a different property
+    if (
+      context?.primary_bbl !== activeProperty?.primary_bbl &&
+      activeProperty !== null
+    ) {
+      setMessages([]);
+      setSources([]);
+    }
+    setActiveProperty(context);
+  }
+
   async function handleSend(content: string) {
     const userMsg: ChatMessage = { role: "user", content };
     const updated = [...messages, userMsg];
@@ -61,7 +73,7 @@ export default function ChatPage() {
             flexDirection: "column",
           }}
         >
-          <Sidebar onPropertyChange={setActiveProperty} onProjectSwitch={handleProjectSwitch} />
+          <Sidebar onPropertyChange={handlePropertyChange} onProjectSwitch={handleProjectSwitch} />
         </div>
       )}
 
