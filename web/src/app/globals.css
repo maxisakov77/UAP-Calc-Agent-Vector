@@ -376,10 +376,13 @@ body {
   align-items: center;
   gap: 6px;
   padding: 4px 8px;
-  border: 1px solid var(--underwriting-source-border, rgba(34,197,94,0.25));
-  background: var(--underwriting-source-tint, rgba(34,197,94,0.12));
+  border: 1px solid var(--underwriting-source-border-strong, rgba(34,197,94,0.55));
+  background: var(--underwriting-source-surface, rgba(34,197,94,0.22));
   color: var(--foreground);
   max-width: 280px;
+  box-shadow:
+    inset 0 0 0 1px var(--underwriting-source-border, rgba(34,197,94,0.35)),
+    0 0 0 1px rgba(0, 0, 0, 0.12);
 }
 
 .underwriting-document-dot {
@@ -395,54 +398,80 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--underwriting-source-text, var(--brand-white));
+  font-weight: 600;
 }
 
 .underwriting-source-theme-0 {
-  --underwriting-source-color: hsl(12 72% 64%);
-  --underwriting-source-tint: hsl(12 72% 64% / 0.16);
-  --underwriting-source-border: hsl(12 72% 64% / 0.4);
+  --underwriting-source-color: hsl(12 88% 66%);
+  --underwriting-source-tint: hsl(12 88% 66% / 0.24);
+  --underwriting-source-surface: hsl(12 88% 66% / 0.2);
+  --underwriting-source-border: hsl(12 88% 66% / 0.42);
+  --underwriting-source-border-strong: hsl(12 88% 66% / 0.72);
+  --underwriting-source-text: hsl(12 100% 93%);
 }
 
 .underwriting-source-theme-1 {
-  --underwriting-source-color: hsl(44 72% 64%);
-  --underwriting-source-tint: hsl(44 72% 64% / 0.16);
-  --underwriting-source-border: hsl(44 72% 64% / 0.4);
+  --underwriting-source-color: hsl(44 92% 66%);
+  --underwriting-source-tint: hsl(44 92% 66% / 0.24);
+  --underwriting-source-surface: hsl(44 92% 66% / 0.2);
+  --underwriting-source-border: hsl(44 92% 66% / 0.42);
+  --underwriting-source-border-strong: hsl(44 92% 66% / 0.72);
+  --underwriting-source-text: hsl(44 100% 92%);
 }
 
 .underwriting-source-theme-2 {
-  --underwriting-source-color: hsl(88 62% 58%);
-  --underwriting-source-tint: hsl(88 62% 58% / 0.16);
-  --underwriting-source-border: hsl(88 62% 58% / 0.4);
+  --underwriting-source-color: hsl(88 76% 58%);
+  --underwriting-source-tint: hsl(88 76% 58% / 0.24);
+  --underwriting-source-surface: hsl(88 76% 58% / 0.2);
+  --underwriting-source-border: hsl(88 76% 58% / 0.42);
+  --underwriting-source-border-strong: hsl(88 76% 58% / 0.72);
+  --underwriting-source-text: hsl(88 100% 92%);
 }
 
 .underwriting-source-theme-3 {
-  --underwriting-source-color: hsl(148 58% 56%);
-  --underwriting-source-tint: hsl(148 58% 56% / 0.16);
-  --underwriting-source-border: hsl(148 58% 56% / 0.4);
+  --underwriting-source-color: hsl(148 72% 56%);
+  --underwriting-source-tint: hsl(148 72% 56% / 0.24);
+  --underwriting-source-surface: hsl(148 72% 56% / 0.2);
+  --underwriting-source-border: hsl(148 72% 56% / 0.42);
+  --underwriting-source-border-strong: hsl(148 72% 56% / 0.72);
+  --underwriting-source-text: hsl(148 100% 92%);
 }
 
 .underwriting-source-theme-4 {
-  --underwriting-source-color: hsl(196 74% 62%);
-  --underwriting-source-tint: hsl(196 74% 62% / 0.16);
-  --underwriting-source-border: hsl(196 74% 62% / 0.4);
+  --underwriting-source-color: hsl(196 88% 64%);
+  --underwriting-source-tint: hsl(196 88% 64% / 0.24);
+  --underwriting-source-surface: hsl(196 88% 64% / 0.2);
+  --underwriting-source-border: hsl(196 88% 64% / 0.42);
+  --underwriting-source-border-strong: hsl(196 88% 64% / 0.72);
+  --underwriting-source-text: hsl(196 100% 94%);
 }
 
 .underwriting-source-theme-5 {
-  --underwriting-source-color: hsl(228 72% 68%);
-  --underwriting-source-tint: hsl(228 72% 68% / 0.16);
-  --underwriting-source-border: hsl(228 72% 68% / 0.4);
+  --underwriting-source-color: hsl(228 86% 70%);
+  --underwriting-source-tint: hsl(228 86% 70% / 0.24);
+  --underwriting-source-surface: hsl(228 86% 70% / 0.2);
+  --underwriting-source-border: hsl(228 86% 70% / 0.42);
+  --underwriting-source-border-strong: hsl(228 86% 70% / 0.72);
+  --underwriting-source-text: hsl(228 100% 95%);
 }
 
 .underwriting-source-theme-6 {
-  --underwriting-source-color: hsl(278 68% 70%);
-  --underwriting-source-tint: hsl(278 68% 70% / 0.16);
-  --underwriting-source-border: hsl(278 68% 70% / 0.4);
+  --underwriting-source-color: hsl(278 82% 72%);
+  --underwriting-source-tint: hsl(278 82% 72% / 0.24);
+  --underwriting-source-surface: hsl(278 82% 72% / 0.2);
+  --underwriting-source-border: hsl(278 82% 72% / 0.42);
+  --underwriting-source-border-strong: hsl(278 82% 72% / 0.72);
+  --underwriting-source-text: hsl(278 100% 95%);
 }
 
 .underwriting-source-theme-7 {
-  --underwriting-source-color: hsl(332 70% 66%);
-  --underwriting-source-tint: hsl(332 70% 66% / 0.16);
-  --underwriting-source-border: hsl(332 70% 66% / 0.4);
+  --underwriting-source-color: hsl(332 84% 68%);
+  --underwriting-source-tint: hsl(332 84% 68% / 0.24);
+  --underwriting-source-surface: hsl(332 84% 68% / 0.2);
+  --underwriting-source-border: hsl(332 84% 68% / 0.42);
+  --underwriting-source-border-strong: hsl(332 84% 68% / 0.72);
+  --underwriting-source-text: hsl(332 100% 95%);
 }
 
 .underwriting-status-bar {
@@ -526,7 +555,6 @@ body {
 
 .underwriting-grid-table {
   width: max-content;
-  min-width: 100%;
   border-collapse: separate;
   border-spacing: 0;
   table-layout: fixed;
@@ -568,7 +596,7 @@ body {
 .underwriting-grid-column-header {
   top: 0;
   z-index: 3;
-  min-width: 112px;
+  min-width: 96px;
   height: 38px;
   box-shadow: inset 0 -1px 0 rgba(120, 199, 234, 0.12);
 }
@@ -582,7 +610,7 @@ body {
 }
 
 .underwriting-grid-cell {
-  min-width: 112px;
+  min-width: 96px;
   padding: 0;
   background: rgba(14, 18, 21, 0.92);
   color: var(--foreground);
@@ -623,8 +651,12 @@ body {
 }
 
 .underwriting-grid-cell-ai-sourced {
-  background: var(--underwriting-source-tint, rgba(59, 130, 246, 0.12));
-  box-shadow: inset 0 0 0 1px var(--underwriting-source-border, rgba(59, 130, 246, 0.28));
+  background:
+    linear-gradient(90deg, var(--underwriting-source-color, rgba(59, 130, 246, 0.8)) 0 5px, transparent 5px),
+    var(--underwriting-source-tint, rgba(59, 130, 246, 0.12));
+  box-shadow:
+    inset 0 0 0 1px var(--underwriting-source-border, rgba(59, 130, 246, 0.28)),
+    inset 0 0 0 999px color-mix(in srgb, var(--underwriting-source-tint, rgba(59, 130, 246, 0.12)) 78%, transparent);
 }
 
 .underwriting-grid-cell-active {
@@ -639,26 +671,20 @@ body {
 .underwriting-grid-input {
   display: block;
   width: 100%;
-  min-height: 34px;
+  min-height: 42px;
   padding: 7px 10px;
   box-sizing: border-box;
   font-size: 12px;
   line-height: 1.35;
   color: inherit;
   text-align: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .underwriting-grid-cell-view {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.underwriting-grid-cell-label .underwriting-grid-cell-view,
-.underwriting-grid-cell-label .underwriting-grid-button {
-  white-space: normal;
   overflow: visible;
-  text-overflow: clip;
 }
 
 .underwriting-grid-button {
@@ -689,4 +715,5 @@ body {
 .underwriting-grid-cell-value .underwriting-grid-input {
   text-align: right;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }

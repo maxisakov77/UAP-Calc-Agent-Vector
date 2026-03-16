@@ -33,6 +33,7 @@ from underwriting_calculator import (
     calculate_underwriting_formula_values,
     enable_workbook_recalculation,
 )
+from underwriting_template import build_underwriting_cell_payload
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
 
@@ -805,15 +806,22 @@ async def parse_underwriting_template(file: UploadFile = File(...)):
         for r in range(1, max_r + 1):
             row = []
             for c in range(1, max_c + 1):
-                val = _safe_cell_value(ws_v.cell(r, c).value)
-                fml = ws_f.cell(r, c).value
+                value_cell = ws_v.cell(r, c)
+                formula_cell = ws_f.cell(r, c)
+                fml = formula_cell.value
                 is_formula = isinstance(fml, str) and fml.startswith("=")
-                if val is None and not is_formula:
+                cell = build_underwriting_cell_payload(
+                    value_cell.value,
+                    row=r,
+                    col=c,
+                    is_formula=is_formula,
+                    number_format=formula_cell.number_format,
+                    epoch=wb_vals.epoch,
+                )
+                if cell is None:
                     row.append(None)
                 else:
-                    cell = {"v": val, "r": r, "c": c}
                     if is_formula:
-                        cell["f"] = True
                         formula_refs.append(f"{_col_letter(c)}{r}")
                     row.append(cell)
             data.append(row)

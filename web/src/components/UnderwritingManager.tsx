@@ -27,9 +27,10 @@ type ActiveCell = {
 };
 
 const ROW_HEADER_WIDTH = 56;
+const MIN_COLUMN_WIDTH = 96;
 const NUMERIC_COLUMN_WIDTH = 112;
-const DEFAULT_COLUMN_WIDTH = 140;
-const TEXT_HEAVY_COLUMN_WIDTH = 220;
+const DEFAULT_COLUMN_WIDTH = 136;
+const MAX_COLUMN_WIDTH = 188;
 
 const moneySignalPattern =
   /(?:\$|\b(?:rent|cost|expense|revenue|income|tax|fee|loan|equity|debt|price|sale|purchase|budget|noi|value)\b)/i;
@@ -219,56 +220,63 @@ function getSourceThemeClass(sourceName: string | undefined): string {
   return `underwriting-source-theme-${hashString(sourceName) % 8}`;
 }
 
+function clampWidth(width: number): number {
+  return Math.max(MIN_COLUMN_WIDTH, Math.min(MAX_COLUMN_WIDTH, width));
+}
+
 function getColumnWidth(
   sheet: TemplateSheet,
   sheetEdits: Record<string, string | number>,
   colIndex: number,
+  rowSignals: string[],
   sheetFormulaValues?: Record<string, CellValue>,
 ): number {
+  let populatedCount = 0;
   let numericCount = 0;
-  let nonEmptyCount = 0;
-  let maxLabelLength = 0;
+  let longestDisplayLength = 0;
+  let totalDisplayLength = 0;
 
   for (let rowIndex = 0; rowIndex < sheet.maxRow; rowIndex++) {
-    const cell = sheet.data[rowIndex]?.[colIndex] ?? null;
-    const value = getResolvedCellValue(cell, sheetEdits, sheetFormulaValues);
+    const row = sheet.data[rowIndex] || [];
+    const cell = row[colIndex] ?? null;
+    const resolvedValue = getResolvedCellValue(cell, sheetEdits, sheetFormulaValues);
 
-    if (value === null || value === "") {
+    if (resolvedValue === null || resolvedValue === "") {
       continue;
     }
 
-    nonEmptyCount += 1;
+    populatedCount += 1;
+    const rowSignal = rowSignals[rowIndex] || "";
+    const displayValue = formatDisplayValue(resolvedValue, rowSignal);
+    const normalizedDisplay = String(displayValue).trim();
 
-    if (typeof value === "number") {
+    if (!normalizedDisplay) {
+      continue;
+    }
+
+    if (typeof resolvedValue === "number" || isNumericString(normalizedDisplay)) {
       numericCount += 1;
-      continue;
     }
 
-    if (typeof value === "string") {
-      if (isNumericString(value)) {
-        numericCount += 1;
-        continue;
-      }
-
-      if (isLabelValue(value)) {
-        maxLabelLength = Math.max(maxLabelLength, value.trim().length);
-      }
-    }
+    longestDisplayLength = Math.max(longestDisplayLength, normalizedDisplay.length);
+    totalDisplayLength += normalizedDisplay.length;
   }
 
-  if (maxLabelLength >= 24) {
-    return TEXT_HEAVY_COLUMN_WIDTH;
+  if (populatedCount === 0) {
+    return DEFAULT_COLUMN_WIDTH;
   }
 
-  if (
-    nonEmptyCount > 0 &&
-    numericCount / nonEmptyCount >= 0.6 &&
-    maxLabelLength < 16
-  ) {
-    return NUMERIC_COLUMN_WIDTH;
+  const numericRatio = numericCount / populatedCount;
+  if (numericRatio >= 0.8) {
+    return clampWidth(Math.max(NUMERIC_COLUMN_WIDTH, Math.min(longestDisplayLength, 12) * 8 + 24));
   }
 
-  return DEFAULT_COLUMN_WIDTH;
+  const averageDisplayLength = totalDisplayLength / populatedCount;
+  const weightedLength = Math.max(
+    Math.min(longestDisplayLength, 18),
+    Math.min(averageDisplayLength + 4, 16),
+  );
+  return clampWidth(DEFAULT_COLUMN_WIDTH + Math.max(0, weightedLength - 12) * 6);
 }
 
 function findAdjacentEditableCell(
@@ -546,7 +554,7 @@ export default function UnderwritingManager() {
     buildRowSignalText(row, sheetEdits, sheetFormulaValues),
   );
   const columnWidths = Array.from({ length: sheet.maxCol }, (_, index) =>
-    getColumnWidth(sheet, sheetEdits, index, sheetFormulaValues),
+    getColumnWidth(sheet, sheetEdits, index, rowSignals, sheetFormulaValues),
   );
 
   function getResolvedValueForCell(cell: TemplateCell | null): CellValue {

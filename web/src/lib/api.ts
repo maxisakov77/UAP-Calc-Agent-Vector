@@ -431,6 +431,7 @@ export interface TemplateCell {
   r: number;
   c: number;
   f?: boolean;
+  z?: string | null;
 }
 
 export interface TemplateSheet {
