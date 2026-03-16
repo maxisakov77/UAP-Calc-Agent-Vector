@@ -28,37 +28,10 @@ type ActiveCell = {
 };
 
 const ROW_HEADER_WIDTH = 56;
-const MIN_COLUMN_WIDTH = 96;
 const NUMERIC_COLUMN_WIDTH = 112;
-const DEFAULT_COLUMN_WIDTH = 136;
-const MAX_COLUMN_WIDTH = 188;
-
-const moneySignalPattern =
-  /(?:\$|\b(?:rent|cost|expense|revenue|income|tax|fee|loan|equity|debt|price|sale|purchase|budget|noi|value)\b)/i;
-const percentSignalPattern =
-  /(?:%|\b(?:percent|rate|yield|margin|irr|ltv|cap)\b)/i;
-
-const numberFormatter = new Intl.NumberFormat(undefined, {
-  maximumFractionDigits: 2,
-});
-
-const currencyFormatter = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  maximumFractionDigits: 2,
-});
-
-const percentFormatter = new Intl.NumberFormat(undefined, {
-  style: "percent",
-  minimumFractionDigits: 0,
-  maximumFractionDigits: 2,
-});
-
-const dateFormatter = new Intl.DateTimeFormat(undefined, {
-  month: "short",
-  day: "numeric",
-  year: "numeric",
-});
+const DEFAULT_COLUMN_WIDTH = 140;
+const LONG_NUMERIC_COLUMN_WIDTH = 196;
+const TEXT_HEAVY_COLUMN_WIDTH = 220;
 
 function colToLetter(col: number): string {
   let value = col;
