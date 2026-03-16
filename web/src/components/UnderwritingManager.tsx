@@ -15,7 +15,9 @@ import {
 } from "@/lib/api";
 
 type CellValue = string | number | boolean | null;
+type EditsBySheet = Record<string, Record<string, string | number>>;
 type FormulaValuesBySheet = Record<string, Record<string, CellValue>>;
+type AiSourceMap = Record<string, Record<string, string>>;
 
 type ActiveCell = {
   sheetName: string;
@@ -201,6 +203,22 @@ function formatDisplayValue(value: CellValue, rowSignal: string): string {
   return value;
 }
 
+function hashString(value: string): number {
+  let hash = 0;
+  for (let index = 0; index < value.length; index++) {
+    hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
+  }
+  return hash;
+}
+
+function getSourceThemeClass(sourceName: string | undefined): string {
+  if (!sourceName) {
+    return "";
+  }
+
+  return `underwriting-source-theme-${hashString(sourceName) % 8}`;
+}
+
 function getColumnWidth(
   sheet: TemplateSheet,
   sheetEdits: Record<string, string | number>,
@@ -287,8 +305,9 @@ function findAdjacentEditableCell(
 export default function UnderwritingManager() {
   const [template, setTemplate] = useState<ParsedTemplate | null>(null);
   const [activeTab, setActiveTab] = useState(0);
-  const [edits, setEdits] = useState<Record<string, Record<string, string | number>>>({});
+  const [edits, setEdits] = useState<EditsBySheet>({});
   const [aiCells, setAiCells] = useState<Record<string, Set<string>>>({});
+  const [aiSources, setAiSources] = useState<AiSourceMap>({});
   const [documents, setDocuments] = useState<DocumentInfo[]>([]);
   const [formulaValues, setFormulaValues] = useState<FormulaValuesBySheet>({});
   const [formulaWarnings, setFormulaWarnings] = useState<UnderwritingRecalculationWarning[]>([]);
@@ -304,6 +323,7 @@ export default function UnderwritingManager() {
   const activeInputRef = useRef<HTMLInputElement>(null);
   const skipBlurCommitRef = useRef(false);
   const recalcRequestIdRef = useRef(0);
+  const editsRef = useRef<EditsBySheet>({});
 
   const refreshDocuments = useCallback(async () => {
     setLoadingDocuments(true);
@@ -332,8 +352,22 @@ export default function UnderwritingManager() {
     setDraftValue("");
   }
 
+  const replaceEdits = useCallback((nextEdits: EditsBySheet) => {
+    editsRef.current = nextEdits;
+    setEdits(nextEdits);
+  }, []);
+
+  const updateEdits = useCallback(
+    (updater: (current: EditsBySheet) => EditsBySheet) => {
+      const nextEdits = updater(editsRef.current);
+      replaceEdits(nextEdits);
+      return nextEdits;
+    },
+    [replaceEdits],
+  );
+
   const runRecalculation = useCallback(
-    async (nextEdits: Record<string, Record<string, string | number>>) => {
+    async (nextEdits: EditsBySheet) => {
       const requestId = ++recalcRequestIdRef.current;
       setRecalculating(true);
 
@@ -369,20 +403,13 @@ export default function UnderwritingManager() {
     row: number,
     col: number,
     raw: string,
-  ): Record<string, Record<string, string | number>> {
+  ): EditsBySheet {
     const ref = getCellRef(row, col);
     const value = normalizeInputValue(raw);
-    let nextEdits: Record<string, Record<string, string | number>> = {};
-
-    setEdits((prev) => {
-      nextEdits = {
-        ...prev,
-        [sheetName]: { ...(prev[sheetName] || {}), [ref]: value },
-      };
-      return nextEdits;
-    });
-
-    return nextEdits;
+    return updateEdits((current) => ({
+      ...current,
+      [sheetName]: { ...(current[sheetName] || {}), [ref]: value },
+    }));
   }
 
   async function handleUpload(event: React.ChangeEvent<HTMLInputElement>) {
@@ -397,8 +424,9 @@ export default function UnderwritingManager() {
     try {
       const parsed = await parseUnderwritingTemplate(file);
       setTemplate(parsed);
-      setEdits({});
+      replaceEdits({});
       setAiCells({});
+      setAiSources({});
       setFormulaValues({});
       setFormulaWarnings([]);
       setActiveTab(0);
@@ -430,17 +458,21 @@ export default function UnderwritingManager() {
       }
 
       const newAi: Record<string, Set<string>> = {};
-      let mergedEdits: Record<string, Record<string, string | number>> = {};
-      setEdits((prev) => {
-        const merged = { ...prev };
+      const newAiSources: AiSourceMap = {};
+      const mergedEdits = updateEdits((current) => {
+        const merged = { ...current };
         for (const [sheetName, cells] of Object.entries(result.updates)) {
           merged[sheetName] = { ...(merged[sheetName] || {}), ...cells };
           newAi[sheetName] = new Set(Object.keys(cells));
+          const sheetSources = result.sources?.[sheetName] || {};
+          if (Object.keys(sheetSources).length > 0) {
+            newAiSources[sheetName] = { ...sheetSources };
+          }
         }
-        mergedEdits = merged;
         return merged;
       });
       setAiCells(newAi);
+      setAiSources(newAiSources);
       const updatedCount = Object.values(result.updates).reduce((sum, cells) => sum + Object.keys(cells).length, 0);
       setStatusMessage(`Auto-filled ${updatedCount} cell${updatedCount === 1 ? "" : "s"} from uploaded documents.`);
       void runRecalculation(mergedEdits);
@@ -455,7 +487,7 @@ export default function UnderwritingManager() {
     setError("");
 
     try {
-      const blob = await downloadFilledTemplate(edits);
+      const blob = await downloadFilledTemplate(editsRef.current);
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
@@ -508,6 +540,7 @@ export default function UnderwritingManager() {
   const sheet = template.sheets[activeTab];
   const sheetEdits = edits[sheet.name] || {};
   const sheetAi = aiCells[sheet.name] || new Set<string>();
+  const sheetAiSources = aiSources[sheet.name] || {};
   const sheetFormulaValues = formulaValues[sheet.name] || {};
   const rowSignals = sheet.data.map((row) =>
     buildRowSignalText(row, sheetEdits, sheetFormulaValues),
@@ -649,7 +682,7 @@ export default function UnderwritingManager() {
               <span
                 key={document.filename}
                 title={`${document.filename} · ${document.chunks} chunk${document.chunks === 1 ? "" : "s"}`}
-                className="underwriting-document-pill"
+                className={`underwriting-document-pill ${getSourceThemeClass(document.filename)}`}
               >
                 <span className="underwriting-document-dot" />
                 <span className="underwriting-document-name">
@@ -758,6 +791,8 @@ export default function UnderwritingManager() {
                       const isFormula = !!cell.f;
                       const hasEdit = sheetEdits[ref] !== undefined;
                       const isAi = sheetAi.has(ref);
+                      const aiSource = sheetAiSources[ref];
+                      const sourceThemeClass = getSourceThemeClass(aiSource);
                       const isActive =
                         activeCell?.sheetName === sheet.name &&
                         activeCell.row === cell.r &&
@@ -779,6 +814,8 @@ export default function UnderwritingManager() {
                         isNumeric ? "underwriting-grid-cell-value" : "",
                         hasEdit ? "underwriting-grid-cell-edited" : "",
                         isAi ? "underwriting-grid-cell-ai" : "",
+                        isAi && aiSource ? "underwriting-grid-cell-ai-sourced" : "",
+                        sourceThemeClass,
                         isActive ? "underwriting-grid-cell-active" : "",
                       ]
                         .filter(Boolean)
@@ -787,6 +824,9 @@ export default function UnderwritingManager() {
                         typeof resolvedValue === "string"
                           ? resolvedValue
                           : displayValue || ref;
+                      const title = aiSource
+                        ? `${displayTitle}\nFilled from: ${aiSource}`
+                        : displayTitle;
 
                       return (
                         <td key={ref} className={className}>
@@ -799,9 +839,10 @@ export default function UnderwritingManager() {
                               onKeyDown={handleActiveInputKeyDown}
                               className="underwriting-grid-input"
                               aria-label={`Edit cell ${ref}`}
+                              title={title}
                             />
                           ) : isFormula ? (
-                            <div className="underwriting-grid-cell-view" title={displayTitle}>
+                            <div className="underwriting-grid-cell-view" title={title}>
                               {displayValue}
                             </div>
                           ) : (
@@ -809,7 +850,7 @@ export default function UnderwritingManager() {
                               type="button"
                               className="underwriting-grid-button"
                               onClick={() => activateCell(cell)}
-                              title={displayTitle}
+                              title={title}
                               aria-label={`Edit cell ${ref}`}
                             >
                               {displayValue}

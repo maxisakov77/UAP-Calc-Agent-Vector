@@ -856,6 +856,7 @@ async def extract_underwriting_values():
     wb_f = openpyxl.load_workbook(io.BytesIO(_template_store["current"]["bytes"]), data_only=False)
 
     all_updates: dict[str, dict] = {}
+    all_sources: dict[str, dict[str, str]] = {}
 
     for name in wb.sheetnames:
         # Skip auto-calculated sheets
@@ -898,15 +899,21 @@ async def extract_underwriting_values():
             include_metadata=True,
         )
 
-        chunks = [
-            m.get("metadata", {}).get("text", "")
-            for m in results.get("matches", [])
-            if m.get("metadata", {}).get("text")
-        ]
-        if not chunks:
+        source_chunks: list[str] = []
+        source_name_lookup: dict[str, str] = {}
+        for match in results.get("matches", []):
+            metadata = match.get("metadata", {}) or {}
+            chunk_text = metadata.get("text", "")
+            source_name = str(metadata.get("source", "Unknown source")).strip() or "Unknown source"
+            if not chunk_text:
+                continue
+            source_chunks.append(f"[Source: {source_name}]\n{chunk_text}")
+            source_name_lookup[source_name.lower()] = source_name
+
+        if not source_chunks:
             continue
 
-        context_text = "\n---\n".join(chunks[:20])
+        context_text = "\n---\n".join(source_chunks[:20])
         cells_desc = "\n".join(cell_descriptions[:300])
 
         prompt = (
@@ -915,7 +922,9 @@ async def extract_underwriting_values():
             f'Current cell values (CellRef=CurrentValue):\n{cells_desc}\n\n'
             f'Source document excerpts:\n{context_text}\n\n'
             f'Extract updated values from the source documents above. '
-            f'Return ONLY a JSON object mapping cell references (like "B5") to new values. '
+            f'Return ONLY a JSON object mapping cell references (like "B5") to objects shaped like '
+            f'{{"value": 123, "source": "exact filename.pdf"}}. '
+            f'Use the exact source name shown in the excerpt header. '
             f'Only include cells where the documents provide a clear, specific value. '
             f'Use numbers for numeric fields. Omit cells with no clear value in the documents.'
         )
@@ -933,13 +942,42 @@ async def extract_underwriting_values():
             result_text = response.choices[0].message.content.strip()
             updates = json.loads(result_text)
             if isinstance(updates, dict) and updates:
-                all_updates[name] = {k: v for k, v in updates.items() if isinstance(k, str)}
+                sheet_updates: dict[str, object] = {}
+                sheet_sources: dict[str, str] = {}
+                for raw_ref, payload in updates.items():
+                    if not isinstance(raw_ref, str):
+                        continue
+
+                    ref = raw_ref.strip().upper()
+                    value = payload
+                    source_name = None
+
+                    if isinstance(payload, dict):
+                        value = payload.get("value")
+                        raw_source_name = payload.get("source")
+                        if isinstance(raw_source_name, str):
+                            source_name = source_name_lookup.get(raw_source_name.strip().lower())
+
+                    if not isinstance(value, (str, int, float, bool)) and value is not None:
+                        continue
+
+                    sheet_updates[ref] = value
+
+                    if source_name:
+                        sheet_sources[ref] = source_name
+                    elif len(source_name_lookup) == 1:
+                        sheet_sources[ref] = next(iter(source_name_lookup.values()))
+
+                if sheet_updates:
+                    all_updates[name] = sheet_updates
+                if sheet_sources:
+                    all_sources[name] = sheet_sources
         except Exception as e:
             logging.warning(f"RAG extraction failed for sheet '{name}': {e}")
 
     total_cells = sum(len(v) for v in all_updates.values())
     logging.info(f"RAG extraction complete: {total_cells} cells across {len(all_updates)} sheets")
-    return {"updates": all_updates}
+    return {"updates": all_updates, "sources": all_sources}
 
 
 @app.post("/api/underwriting/recalculate")
