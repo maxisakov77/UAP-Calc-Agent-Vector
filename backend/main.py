@@ -37,7 +37,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 
 GENERATION_MODEL = os.getenv("GENERATION_MODEL", "gpt-5.4")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-large")
-PINECONE_INDEX = os.getenv("PINECONE_INDEX", "genai-mas-mcp-ch3")
+PINECONE_INDEX = os.getenv("PINECONE_INDEX", "und1")
 NAMESPACE_CONTEXT = os.getenv("NAMESPACE_CONTEXT", "ContextLibrary")
 NAMESPACE_KNOWLEDGE = os.getenv("NAMESPACE_KNOWLEDGE", "KnowledgeStore")
 NAMESPACE_PROPERTY = os.getenv("NAMESPACE_PROPERTY", "PropertyContextStore")
