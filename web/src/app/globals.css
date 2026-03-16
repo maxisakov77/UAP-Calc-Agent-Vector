@@ -242,6 +242,216 @@ body {
   background: rgba(120, 199, 234, 0.08);
 }
 
+.underwriting-empty-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 40px;
+  color: var(--foreground);
+}
+
+.underwriting-empty-icon {
+  font-size: 48px;
+  opacity: 0.3;
+}
+
+.underwriting-empty-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--blue-accent);
+}
+
+.underwriting-empty-copy {
+  margin: 0;
+  font-size: 13px;
+  color: var(--brand-granite-gray);
+  text-align: center;
+  max-width: 420px;
+  line-height: 1.5;
+}
+
+.underwriting-status-copy {
+  margin: 0;
+  font-size: 12px;
+  color: var(--blue-light);
+  text-align: center;
+}
+
+.underwriting-error-copy {
+  margin: 0;
+  font-size: 12px;
+  color: #e55;
+}
+
+.underwriting-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.underwriting-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-dark);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.underwriting-toolbar-title {
+  font-size: 13px;
+  color: var(--brand-granite-gray);
+}
+
+.underwriting-toolbar-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+
+.underwriting-button {
+  padding: 6px 14px;
+  border: 1px solid var(--border-color);
+  color: var(--foreground);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.underwriting-button-primary {
+  padding: 10px 24px;
+  background: var(--blue);
+}
+
+.underwriting-button-secondary {
+  padding: 6px 12px;
+  background: none;
+  font-weight: 400;
+}
+
+.underwriting-button-accent {
+  background: rgba(59,130,246,0.2);
+  border-color: rgba(59,130,246,0.4);
+  color: var(--blue-light);
+}
+
+.underwriting-button-success {
+  background: rgba(34,197,94,0.15);
+  border-color: rgba(34,197,94,0.4);
+  color: #4ade80;
+}
+
+.underwriting-button-disabled {
+  cursor: not-allowed;
+  background: var(--bg-elevated);
+  color: var(--brand-granite-gray);
+}
+
+.underwriting-documents-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border-color);
+  background: rgba(34,197,94,0.06);
+  color: var(--brand-granite-gray);
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+
+.underwriting-documents-label {
+  color: #4ade80;
+  font-weight: 600;
+}
+
+.underwriting-document-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid rgba(34,197,94,0.25);
+  background: rgba(34,197,94,0.12);
+  color: var(--foreground);
+  max-width: 280px;
+}
+
+.underwriting-document-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #22c55e;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.underwriting-document-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.underwriting-status-bar {
+  padding: 8px 16px;
+  font-size: 12px;
+  color: var(--blue-light);
+  background: rgba(59,130,246,0.08);
+  border-bottom: 1px solid rgba(59,130,246,0.2);
+}
+
+.underwriting-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-dark);
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+
+.underwriting-tab {
+  padding: 8px 14px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--brand-granite-gray);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.underwriting-tab-active {
+  background: var(--bg-main);
+  border-bottom-color: var(--blue-accent);
+  color: var(--blue-accent);
+  font-weight: 600;
+}
+
+.underwriting-error-bar {
+  padding: 8px 16px;
+  font-size: 12px;
+  color: #e55;
+  background: rgba(238,85,85,0.1);
+  border-bottom: 1px solid rgba(238,85,85,0.2);
+}
+
+.underwriting-footer {
+  padding: 8px 16px;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-dark);
+  display: flex;
+  gap: 16px;
+  font-size: 11px;
+  color: var(--brand-granite-gray);
+  flex-shrink: 0;
+}
+
 .underwriting-grid-shell {
   flex: 1;
   min-height: 0;

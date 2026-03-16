@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   downloadFilledTemplate,
   extractUnderwritingValues,
+  listDocuments,
   parseUnderwritingTemplate,
+  type DocumentInfo,
   type ParsedTemplate,
   type TemplateCell,
   type TemplateSheet,
@@ -269,20 +271,39 @@ export default function UnderwritingManager() {
   const [activeTab, setActiveTab] = useState(0);
   const [edits, setEdits] = useState<Record<string, Record<string, string | number>>>({});
   const [aiCells, setAiCells] = useState<Record<string, Set<string>>>({});
+  const [documents, setDocuments] = useState<DocumentInfo[]>([]);
   const [uploading, setUploading] = useState(false);
   const [extracting, setExtracting] = useState(false);
+  const [loadingDocuments, setLoadingDocuments] = useState(true);
   const [error, setError] = useState("");
+  const [statusMessage, setStatusMessage] = useState("");
   const [activeCell, setActiveCell] = useState<ActiveCell | null>(null);
   const [draftValue, setDraftValue] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const activeInputRef = useRef<HTMLInputElement>(null);
   const skipBlurCommitRef = useRef(false);
 
+  const refreshDocuments = useCallback(async () => {
+    setLoadingDocuments(true);
+    try {
+      const response = await listDocuments();
+      setDocuments(response.documents);
+    } catch {
+      setDocuments([]);
+    } finally {
+      setLoadingDocuments(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (!activeCell) return;
     activeInputRef.current?.focus();
     activeInputRef.current?.select();
   }, [activeCell]);
+
+  useEffect(() => {
+    void refreshDocuments();
+  }, [refreshDocuments]);
 
   function clearActiveCell() {
     setActiveCell(null);
@@ -295,6 +316,7 @@ export default function UnderwritingManager() {
 
     setUploading(true);
     setError("");
+    setStatusMessage("");
     clearActiveCell();
 
     try {
@@ -303,6 +325,7 @@ export default function UnderwritingManager() {
       setEdits({});
       setAiCells({});
       setActiveTab(0);
+      setStatusMessage(`Loaded ${parsed.filename} with ${parsed.sheets.length} sheet${parsed.sheets.length === 1 ? "" : "s"}.`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed");
     } finally {
@@ -324,12 +347,13 @@ export default function UnderwritingManager() {
   async function handleExtract() {
     setExtracting(true);
     setError("");
+    setStatusMessage("");
     clearActiveCell();
 
     try {
       const result = await extractUnderwritingValues();
       if (result.message) {
-        setError(result.message);
+        setStatusMessage(result.message);
         return;
       }
 
@@ -343,6 +367,8 @@ export default function UnderwritingManager() {
         return merged;
       });
       setAiCells(newAi);
+      const updatedCount = Object.values(result.updates).reduce((sum, cells) => sum + Object.keys(cells).length, 0);
+      setStatusMessage(`Auto-filled ${updatedCount} cell${updatedCount === 1 ? "" : "s"} from uploaded documents.`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Extraction failed");
     } finally {
@@ -364,6 +390,7 @@ export default function UnderwritingManager() {
       anchor.click();
       document.body.removeChild(anchor);
       URL.revokeObjectURL(url);
+      setStatusMessage("Downloaded filled workbook.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Download failed");
     }
@@ -371,39 +398,10 @@ export default function UnderwritingManager() {
 
   if (!template) {
     return (
-      <div
-        style={{
-          flex: 1,
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 16,
-          padding: 40,
-          color: "var(--foreground)",
-        }}
-      >
-        <div style={{ fontSize: 48, opacity: 0.3 }}>📊</div>
-        <h2
-          style={{
-            margin: 0,
-            fontSize: 18,
-            fontWeight: 600,
-            color: "var(--blue-accent)",
-          }}
-        >
-          Underwriting Template
-        </h2>
-        <p
-          style={{
-            margin: 0,
-            fontSize: 13,
-            color: "var(--brand-granite-gray)",
-            textAlign: "center",
-            maxWidth: 420,
-            lineHeight: 1.5,
-          }}
-        >
+      <div className="underwriting-empty-state">
+        <div className="underwriting-empty-icon">📊</div>
+        <h2 className="underwriting-empty-title">Underwriting Template</h2>
+        <p className="underwriting-empty-copy">
           Upload a UAP underwriting Excel template to parse its structure, then use{" "}
           <strong>Auto-Fill</strong> to extract values from your uploaded
           documents via RAG.
@@ -413,24 +411,21 @@ export default function UnderwritingManager() {
           type="file"
           accept=".xlsx,.xls"
           onChange={handleUpload}
-          style={{ display: "none" }}
+          aria-label="Upload underwriting template"
+          title="Upload underwriting template"
+          hidden
         />
         <button
           onClick={() => fileRef.current?.click()}
           disabled={uploading}
-          style={{
-            padding: "10px 24px",
-            background: "var(--blue)",
-            border: "1px solid var(--border-color)",
-            color: "var(--foreground)",
-            cursor: uploading ? "not-allowed" : "pointer",
-            fontSize: 14,
-            fontWeight: 600,
-          }}
+          className={`underwriting-button underwriting-button-primary${uploading ? " underwriting-button-disabled" : ""}`}
         >
           {uploading ? "Parsing…" : "Upload Excel Template"}
         </button>
-        {error && <p style={{ fontSize: 12, color: "#e55" }}>{error}</p>}
+        {statusMessage && (
+          <p className="underwriting-status-copy">{statusMessage}</p>
+        )}
+        {error && <p className="underwriting-error-copy">{error}</p>}
       </div>
     );
   }
@@ -522,86 +517,76 @@ export default function UnderwritingManager() {
   }
 
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 12,
-          padding: "10px 16px",
-          borderBottom: "1px solid var(--border-color)",
-          background: "var(--bg-dark)",
-          flexShrink: 0,
-          flexWrap: "wrap",
-        }}
-      >
-        <span style={{ fontSize: 13, color: "var(--brand-granite-gray)" }}>
+    <div className="underwriting-panel">
+      <div className="underwriting-toolbar">
+        <span className="underwriting-toolbar-title">
           📊 {template.filename}
         </span>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+        <div className="underwriting-toolbar-actions">
           <input
             ref={fileRef}
             type="file"
             accept=".xlsx,.xls"
             onChange={handleUpload}
-            style={{ display: "none" }}
+            aria-label="Replace underwriting template"
+            title="Replace underwriting template"
+            hidden
           />
           <button
             onClick={() => fileRef.current?.click()}
             disabled={uploading}
-            style={{
-              padding: "6px 12px",
-              background: "none",
-              border: "1px solid var(--border-color)",
-              color: "var(--foreground)",
-              cursor: "pointer",
-              fontSize: 12,
-            }}
+            className={`underwriting-button underwriting-button-secondary${uploading ? " underwriting-button-disabled" : ""}`}
           >
             Re-upload
           </button>
           <button
             onClick={handleExtract}
             disabled={extracting}
-            style={{
-              padding: "6px 14px",
-              background: extracting ? "var(--bg-elevated)" : "rgba(59,130,246,0.2)",
-              border: "1px solid rgba(59,130,246,0.4)",
-              color: "var(--blue-light)",
-              cursor: extracting ? "not-allowed" : "pointer",
-              fontSize: 12,
-              fontWeight: 600,
-            }}
+            className={`underwriting-button underwriting-button-accent${extracting ? " underwriting-button-disabled" : ""}`}
           >
             {extracting ? "Extracting…" : "⚡ Auto-Fill from Docs"}
           </button>
           <button
             onClick={handleDownload}
-            style={{
-              padding: "6px 14px",
-              background: "rgba(34,197,94,0.15)",
-              border: "1px solid rgba(34,197,94,0.4)",
-              color: "#4ade80",
-              cursor: "pointer",
-              fontSize: 12,
-              fontWeight: 600,
-            }}
+            className="underwriting-button underwriting-button-success"
           >
             ⬇ Download .xlsx
           </button>
         </div>
       </div>
 
-      <div
-        style={{
-          display: "flex",
-          gap: 0,
-          borderBottom: "1px solid var(--border-color)",
-          background: "var(--bg-dark)",
-          overflowX: "auto",
-          flexShrink: 0,
-        }}
-      >
+      <div className="underwriting-documents-bar">
+        <span className="underwriting-documents-label">Documents</span>
+        {loadingDocuments ? (
+          <span>Loading uploaded files...</span>
+        ) : documents.length > 0 ? (
+          <>
+            {documents.slice(0, 6).map((document) => (
+              <span
+                key={document.filename}
+                title={`${document.filename} · ${document.chunks} chunk${document.chunks === 1 ? "" : "s"}`}
+                className="underwriting-document-pill"
+              >
+                <span className="underwriting-document-dot" />
+                <span className="underwriting-document-name">
+                  {document.filename}
+                </span>
+              </span>
+            ))}
+            {documents.length > 6 && <span>+{documents.length - 6} more</span>}
+          </>
+        ) : (
+          <span>No supporting documents uploaded for this project yet.</span>
+        )}
+      </div>
+
+      {statusMessage && !error && (
+        <div className="underwriting-status-bar">
+          {statusMessage}
+        </div>
+      )}
+
+      <div className="underwriting-tabs">
         {template.sheets.map((tabSheet, index) => (
           <button
             key={tabSheet.name}
@@ -609,23 +594,7 @@ export default function UnderwritingManager() {
               clearActiveCell();
               setActiveTab(index);
             }}
-            style={{
-              padding: "8px 14px",
-              background: index === activeTab ? "var(--bg-main)" : "transparent",
-              border: "none",
-              borderBottom:
-                index === activeTab
-                  ? "2px solid var(--blue-accent)"
-                  : "2px solid transparent",
-              color:
-                index === activeTab
-                  ? "var(--blue-accent)"
-                  : "var(--brand-granite-gray)",
-              cursor: "pointer",
-              fontSize: 12,
-              fontWeight: index === activeTab ? 600 : 400,
-              whiteSpace: "nowrap",
-            }}
+            className={`underwriting-tab${index === activeTab ? " underwriting-tab-active" : ""}`}
           >
             {tabSheet.name.length > 22 ? `${tabSheet.name.slice(0, 22)}…` : tabSheet.name}
           </button>
@@ -633,15 +602,7 @@ export default function UnderwritingManager() {
       </div>
 
       {error && (
-        <div
-          style={{
-            padding: "8px 16px",
-            fontSize: 12,
-            color: "#e55",
-            background: "rgba(238,85,85,0.1)",
-            borderBottom: "1px solid rgba(238,85,85,0.2)",
-          }}
-        >
+        <div className="underwriting-error-bar">
           {error}
         </div>
       )}
@@ -650,9 +611,9 @@ export default function UnderwritingManager() {
         <div className="underwriting-grid-scroll">
           <table className="underwriting-grid-table">
             <colgroup>
-              <col style={{ width: ROW_HEADER_WIDTH }} />
+              <col width={ROW_HEADER_WIDTH} />
               {columnWidths.map((width, index) => (
-                <col key={colToLetter(index + 1)} style={{ width }} />
+                <col key={colToLetter(index + 1)} width={width} />
               ))}
             </colgroup>
             <thead>
@@ -764,18 +725,7 @@ export default function UnderwritingManager() {
         </div>
       </div>
 
-      <div
-        style={{
-          padding: "8px 16px",
-          borderTop: "1px solid var(--border-color)",
-          background: "var(--bg-dark)",
-          display: "flex",
-          gap: 16,
-          fontSize: 11,
-          color: "var(--brand-granite-gray)",
-          flexShrink: 0,
-        }}
-      >
+      <div className="underwriting-footer">
         <span>
           {sheet.maxRow} rows × {sheet.maxCol} cols
         </span>
