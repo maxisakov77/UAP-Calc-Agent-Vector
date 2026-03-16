@@ -20,6 +20,12 @@ export default function ChatPage() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
+  function handleProjectSwitch() {
+    setMessages([]);
+    setSources([]);
+    setActiveProperty(null);
+  }
+
   async function handleSend(content: string) {
     const userMsg: ChatMessage = { role: "user", content };
     const updated = [...messages, userMsg];
@@ -55,7 +61,7 @@ export default function ChatPage() {
             flexDirection: "column",
           }}
         >
-          <Sidebar onPropertyChange={setActiveProperty} />
+          <Sidebar onPropertyChange={setActiveProperty} onProjectSwitch={handleProjectSwitch} />
         </div>
       )}
 

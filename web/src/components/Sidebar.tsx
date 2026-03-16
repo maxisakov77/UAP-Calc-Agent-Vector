@@ -17,13 +17,17 @@ interface QueuedFile {
 
 export default function Sidebar({
   onPropertyChange,
+  onProjectSwitch,
 }: {
   onPropertyChange?: (context: PropertyContext | null) => void;
+  onProjectSwitch?: () => void;
 }) {
   const [documents, setDocuments] = useState<DocumentInfo[]>([]);
   const [totalChunks, setTotalChunks] = useState(0);
   const [queue, setQueue] = useState<QueuedFile[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [error, setError] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -31,7 +35,8 @@ export default function Sidebar({
   const handleProjectSwitch = useCallback(() => {
     setRefreshKey((k) => k + 1);
     refresh();
-  }, []);
+    onProjectSwitch?.();
+  }, [onProjectSwitch]);
 
   async function refresh() {
     try {
@@ -84,9 +89,62 @@ export default function Sidebar({
   async function handleDelete(filename: string) {
     try {
       await deleteDocument(filename);
+      setSelected((prev) => { const next = new Set(prev); next.delete(filename); return next; });
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Delete failed");
+    }
+  }
+
+  function toggleSelect(filename: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(filename)) next.delete(filename); else next.add(filename);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (selected.size === documents.length) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(documents.map((d) => d.filename)));
+    }
+  }
+
+  async function handleDeleteSelected() {
+    if (selected.size === 0) return;
+    setDeleting(true);
+    setError("");
+    try {
+      for (const filename of selected) {
+        await deleteDocument(filename);
+      }
+      setSelected(new Set());
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Batch delete failed");
+      await refresh();
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  async function handleDeleteAll() {
+    if (documents.length === 0) return;
+    setDeleting(true);
+    setError("");
+    try {
+      for (const doc of documents) {
+        await deleteDocument(doc.filename);
+      }
+      setSelected(new Set());
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Delete all failed");
+      await refresh();
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -246,12 +304,19 @@ export default function Sidebar({
                 alignItems: "center",
                 justifyContent: "space-between",
                 padding: "8px 10px",
-                background: "var(--bg-card)",
-                border: "1px solid var(--glass-border)",
+                background: selected.has(doc.filename) ? "var(--bg-elevated)" : "var(--bg-card)",
+                border: selected.has(doc.filename) ? "1px solid var(--blue-accent)" : "1px solid var(--glass-border)",
                 fontSize: 13,
                 color: "var(--foreground)",
               }}
             >
+              <input
+                type="checkbox"
+                checked={selected.has(doc.filename)}
+                onChange={() => toggleSelect(doc.filename)}
+                aria-label={`Select ${doc.filename}`}
+                style={{ marginRight: 8, accentColor: "var(--blue-accent)", cursor: "pointer" }}
+              />
               <div style={{ overflow: "hidden", flex: 1 }}>
                 <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {doc.filename}
@@ -284,6 +349,60 @@ export default function Sidebar({
             </p>
           )}
         </div>
+
+        {/* Batch Actions */}
+        {documents.length > 0 && (
+          <div style={{ display: "flex", gap: 6 }}>
+            <button
+              onClick={toggleSelectAll}
+              style={{
+                flex: 1,
+                padding: "6px 0",
+                background: "none",
+                border: "1px solid var(--border-color)",
+                color: "var(--brand-granite-gray)",
+                cursor: "pointer",
+                fontSize: 11,
+              }}
+            >
+              {selected.size === documents.length ? "Deselect All" : "Select All"}
+            </button>
+            {selected.size > 0 && (
+              <button
+                onClick={handleDeleteSelected}
+                disabled={deleting}
+                style={{
+                  flex: 1,
+                  padding: "6px 0",
+                  background: "rgba(238,85,85,0.15)",
+                  border: "1px solid rgba(238,85,85,0.3)",
+                  color: "#e55",
+                  cursor: deleting ? "not-allowed" : "pointer",
+                  fontSize: 11,
+                  fontWeight: 600,
+                }}
+              >
+                {deleting ? "Deleting…" : `Delete ${selected.size} Selected`}
+              </button>
+            )}
+            <button
+              onClick={handleDeleteAll}
+              disabled={deleting}
+              style={{
+                flex: 1,
+                padding: "6px 0",
+                background: "rgba(238,85,85,0.15)",
+                border: "1px solid rgba(238,85,85,0.3)",
+                color: "#e55",
+                cursor: deleting ? "not-allowed" : "pointer",
+                fontSize: 11,
+                fontWeight: 600,
+              }}
+            >
+              {deleting ? "Deleting…" : "Delete All"}
+            </button>
+          </div>
+        )}
       </div>
 
       <SectionDivider />

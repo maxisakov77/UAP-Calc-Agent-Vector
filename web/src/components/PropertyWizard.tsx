@@ -68,6 +68,10 @@ export default function PropertyWizard({
   }
 
   useEffect(() => {
+    setQuery("");
+    setResults([]);
+    setLotInput("");
+    setError("");
     void loadActiveContext();
   }, [refreshKey]);
 
