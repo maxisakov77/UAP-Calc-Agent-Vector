@@ -130,23 +130,7 @@ export default function Sidebar({
     }
   }
 
-  async function handleDeleteAll() {
-    if (documents.length === 0) return;
-    setDeleting(true);
-    setError("");
-    try {
-      for (const doc of documents) {
-        await deleteDocument(doc.filename);
-      }
-      setSelected(new Set());
-      await refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Delete all failed");
-      await refresh();
-    } finally {
-      setDeleting(false);
-    }
-  }
+
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", padding: 16, gap: 0, overflowY: "auto" }}>
@@ -385,22 +369,6 @@ export default function Sidebar({
                 {deleting ? "Deleting…" : `Delete ${selected.size} Selected`}
               </button>
             )}
-            <button
-              onClick={handleDeleteAll}
-              disabled={deleting}
-              style={{
-                flex: 1,
-                padding: "6px 0",
-                background: "rgba(238,85,85,0.15)",
-                border: "1px solid rgba(238,85,85,0.3)",
-                color: "#e55",
-                cursor: deleting ? "not-allowed" : "pointer",
-                fontSize: 11,
-                fontWeight: 600,
-              }}
-            >
-              {deleting ? "Deleting…" : "Delete All"}
-            </button>
           </div>
         )}
       </div>
