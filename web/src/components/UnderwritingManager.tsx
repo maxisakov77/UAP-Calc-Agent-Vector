@@ -27,6 +27,17 @@ type ActiveCell = {
   ref: string;
 };
 
+type AutofillEntry = {
+  key: string;
+  sheetName: string;
+  row: number;
+  col: number;
+  ref: string;
+  sourceName: string;
+  displayValue: string;
+  rawValue: string;
+};
+
 const ROW_HEADER_WIDTH = 56;
 const NUMERIC_COLUMN_WIDTH = 112;
 const DEFAULT_COLUMN_WIDTH = 140;
@@ -48,6 +59,30 @@ function colToLetter(col: number): string {
 
 function getCellRef(row: number, col: number): string {
   return `${colToLetter(col)}${row}`;
+}
+
+function letterToCol(label: string): number {
+  let value = 0;
+  for (const char of label.toUpperCase()) {
+    value = value * 26 + (char.charCodeAt(0) - 64);
+  }
+  return value;
+}
+
+function parseCellRef(ref: string): { row: number; col: number } | null {
+  const match = /^([A-Z]+)(\d+)$/i.exec(ref.trim());
+  if (!match) {
+    return null;
+  }
+
+  return {
+    col: letterToCol(match[1]),
+    row: Number(match[2]),
+  };
+}
+
+function getAutofillKey(sheetName: string, ref: string): string {
+  return `${sheetName}::${ref.toUpperCase()}`;
 }
 
 function normalizeInputValue(value: string): string | number {
@@ -77,180 +112,99 @@ function toInputValue(value: CellValue): string {
   return value === null ? "" : String(value);
 }
 
-function isNumericString(value: string): boolean {
-  const trimmed = value.trim();
-  return trimmed !== "" && !Number.isNaN(Number(trimmed));
-}
-
-function isDateLikeString(value: string): boolean {
-  const trimmed = value.trim();
-  if (!trimmed || /^\d+$/.test(trimmed)) {
-    return false;
-  }
-  if (!(/[/-]/.test(trimmed) || /[A-Za-z]{3,}/.test(trimmed))) {
-    return false;
-  }
-  return !Number.isNaN(Date.parse(trimmed));
-}
-
 function isLabelValue(value: CellValue): value is string {
-  return (
-    typeof value === "string" &&
-    value.trim() !== "" &&
-    !isNumericString(value) &&
-    !isDateLikeString(value)
-  );
+  return typeof value === "string" && value.trim() !== "";
 }
 
-function buildRowSignalText(
-  row: (TemplateCell | null)[],
-  sheetEdits: Record<string, string | number>,
-  sheetFormulaValues?: Record<string, CellValue>,
-): string {
-  return row
-    .map((cell) => {
-      const value = getResolvedCellValue(cell, sheetEdits, sheetFormulaValues);
-      if (typeof value !== "string") return "";
-
-      const trimmed = value.trim();
-      if (!trimmed) return "";
-      if (!isLabelValue(trimmed) && !/[%$]/.test(trimmed)) return "";
-
-      return trimmed.toLowerCase();
-    })
-    .filter(Boolean)
-    .join(" ");
-}
-
-function getCellSignalText(
-  row: (TemplateCell | null)[],
-  colIndex: number,
-  rowSignal: string,
-  sheetEdits: Record<string, string | number>,
-  sheetFormulaValues?: Record<string, CellValue>,
-): string {
-  for (let index = colIndex - 1; index >= 0; index--) {
-    const candidate = getResolvedCellValue(
-      row[index] ?? null,
-      sheetEdits,
-      sheetFormulaValues,
-    );
-    if (typeof candidate !== "string") {
-      continue;
-    }
-
-    const trimmed = candidate.trim();
-    if (!trimmed) {
-      continue;
-    }
-
-    if (isLabelValue(trimmed) || /[%$]/.test(trimmed)) {
-      return trimmed.toLowerCase();
-    }
-  }
-
-  return rowSignal;
-}
-
-function formatPercentValue(value: number): string {
-  const normalized = Math.abs(value) <= 1 ? value : value / 100;
-  return percentFormatter.format(normalized);
-}
-
-function formatDisplayValue(value: CellValue, rowSignal: string): string {
+function formatGeneralValue(value: CellValue): string {
   if (value === null) return "";
   if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
+  if (typeof value === "string") return value;
 
-  if (typeof value === "number") {
-    if (percentSignalPattern.test(rowSignal)) {
-      return formatPercentValue(value);
-    }
-    if (moneySignalPattern.test(rowSignal)) {
-      return currencyFormatter.format(value);
-    }
-    return numberFormatter.format(value);
+  try {
+    return SSF.format("General", value);
+  } catch {
+    return String(value);
   }
-
-  if (isDateLikeString(value)) {
-    return dateFormatter.format(new Date(value));
-  }
-
-  return value;
 }
 
-function hashString(value: string): number {
-  let hash = 0;
-  for (let index = 0; index < value.length; index++) {
-    hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
+function formatWorkbookDisplayValue(
+  cell: TemplateCell | null,
+  value: CellValue,
+): string {
+  if (!cell) return "";
+  if (value === null) return "";
+  if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
+  if (typeof value === "string") return value;
+
+  const formatCode = cell.z?.trim();
+  if (!formatCode) {
+    return formatGeneralValue(value);
   }
-  return hash;
+
+  try {
+    return SSF.format(formatCode, value);
+  } catch {
+    return formatGeneralValue(value);
+  }
 }
 
-function getSourceThemeClass(sourceName: string | undefined): string {
-  if (!sourceName) {
-    return "";
-  }
-
-  return `underwriting-source-theme-${hashString(sourceName) % 8}`;
-}
-
-function clampWidth(width: number): number {
-  return Math.max(MIN_COLUMN_WIDTH, Math.min(MAX_COLUMN_WIDTH, width));
+function buildSourceThemeMap(sourceNames: string[]): Record<string, string> {
+  const uniqueNames = Array.from(new Set(sourceNames.filter(Boolean)));
+  return Object.fromEntries(
+    uniqueNames.map((sourceName, index) => [sourceName, `underwriting-source-theme-${index % 12}`]),
+  );
 }
 
 function getColumnWidth(
   sheet: TemplateSheet,
   sheetEdits: Record<string, string | number>,
   colIndex: number,
-  rowSignals: string[],
   sheetFormulaValues?: Record<string, CellValue>,
 ): number {
-  let populatedCount = 0;
+  let nonEmptyCount = 0;
   let numericCount = 0;
-  let longestDisplayLength = 0;
-  let totalDisplayLength = 0;
+  let maxDisplayLength = 0;
+  let maxTextLength = 0;
 
   for (let rowIndex = 0; rowIndex < sheet.maxRow; rowIndex++) {
-    const row = sheet.data[rowIndex] || [];
-    const cell = row[colIndex] ?? null;
+    const cell = sheet.data[rowIndex]?.[colIndex] ?? null;
+    if (!cell) {
+      continue;
+    }
+
     const resolvedValue = getResolvedCellValue(cell, sheetEdits, sheetFormulaValues);
+    const displayValue = formatWorkbookDisplayValue(cell, resolvedValue).trim();
 
-    if (resolvedValue === null || resolvedValue === "") {
+    if (!displayValue) {
       continue;
     }
 
-    populatedCount += 1;
-    const rowSignal = rowSignals[rowIndex] || "";
-    const displayValue = formatDisplayValue(resolvedValue, rowSignal);
-    const normalizedDisplay = String(displayValue).trim();
+    nonEmptyCount += 1;
+    maxDisplayLength = Math.max(maxDisplayLength, displayValue.length);
 
-    if (!normalizedDisplay) {
-      continue;
-    }
-
-    if (typeof resolvedValue === "number" || isNumericString(normalizedDisplay)) {
+    if (typeof resolvedValue === "number") {
       numericCount += 1;
+      continue;
     }
 
-    longestDisplayLength = Math.max(longestDisplayLength, normalizedDisplay.length);
-    totalDisplayLength += normalizedDisplay.length;
+    if (typeof resolvedValue === "string") {
+      maxTextLength = Math.max(maxTextLength, resolvedValue.trim().length);
+    }
   }
 
-  if (populatedCount === 0) {
-    return DEFAULT_COLUMN_WIDTH;
+  if (maxTextLength >= 28 || maxDisplayLength >= 30) {
+    return TEXT_HEAVY_COLUMN_WIDTH;
   }
 
-  const numericRatio = numericCount / populatedCount;
-  if (numericRatio >= 0.8) {
-    return clampWidth(Math.max(NUMERIC_COLUMN_WIDTH, Math.min(longestDisplayLength, 12) * 8 + 24));
+  if (nonEmptyCount > 0 && numericCount / nonEmptyCount >= 0.6) {
+    if (maxDisplayLength >= 16) {
+      return LONG_NUMERIC_COLUMN_WIDTH;
+    }
+    return NUMERIC_COLUMN_WIDTH;
   }
 
-  const averageDisplayLength = totalDisplayLength / populatedCount;
-  const weightedLength = Math.max(
-    Math.min(longestDisplayLength, 18),
-    Math.min(averageDisplayLength + 4, 16),
-  );
-  return clampWidth(DEFAULT_COLUMN_WIDTH + Math.max(0, weightedLength - 12) * 6);
+  return DEFAULT_COLUMN_WIDTH;
 }
 
 function findAdjacentEditableCell(
@@ -290,6 +244,8 @@ export default function UnderwritingManager() {
   const [edits, setEdits] = useState<EditsBySheet>({});
   const [aiCells, setAiCells] = useState<Record<string, Set<string>>>({});
   const [aiSources, setAiSources] = useState<AiSourceMap>({});
+  const [autofillQuery, setAutofillQuery] = useState("");
+  const [selectedAutofillKey, setSelectedAutofillKey] = useState<string | null>(null);
   const [documents, setDocuments] = useState<DocumentInfo[]>([]);
   const [formulaValues, setFormulaValues] = useState<FormulaValuesBySheet>({});
   const [formulaWarnings, setFormulaWarnings] = useState<UnderwritingRecalculationWarning[]>([]);
@@ -306,6 +262,7 @@ export default function UnderwritingManager() {
   const skipBlurCommitRef = useRef(false);
   const recalcRequestIdRef = useRef(0);
   const editsRef = useRef<EditsBySheet>({});
+  const cellElementRefs = useRef<Record<string, HTMLTableCellElement | null>>({});
 
   const refreshDocuments = useCallback(async () => {
     setLoadingDocuments(true);
@@ -409,6 +366,8 @@ export default function UnderwritingManager() {
       replaceEdits({});
       setAiCells({});
       setAiSources({});
+      setAutofillQuery("");
+      setSelectedAutofillKey(null);
       setFormulaValues({});
       setFormulaWarnings([]);
       setActiveTab(0);
@@ -456,7 +415,21 @@ export default function UnderwritingManager() {
       setAiCells(newAi);
       setAiSources(newAiSources);
       const updatedCount = Object.values(result.updates).reduce((sum, cells) => sum + Object.keys(cells).length, 0);
-      setStatusMessage(`Auto-filled ${updatedCount} cell${updatedCount === 1 ? "" : "s"} from uploaded documents.`);
+      const firstFilledSheet = Object.keys(result.updates)[0];
+      const firstFilledRef = firstFilledSheet ? Object.keys(result.updates[firstFilledSheet] || {})[0] : null;
+      setAutofillQuery("");
+      if (firstFilledSheet && firstFilledRef && template) {
+        const nextTabIndex = template.sheets.findIndex((candidate) => candidate.name === firstFilledSheet);
+        if (nextTabIndex >= 0) {
+          setActiveTab(nextTabIndex);
+        }
+        setSelectedAutofillKey(getAutofillKey(firstFilledSheet, firstFilledRef));
+      } else {
+        setSelectedAutofillKey(null);
+      }
+      setStatusMessage(
+        `Auto-filled ${updatedCount} cell${updatedCount === 1 ? "" : "s"} from uploaded documents. Browse the Autofill Matches panel for locations.`,
+      );
       void runRecalculation(mergedEdits);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Extraction failed");
@@ -484,6 +457,40 @@ export default function UnderwritingManager() {
       setError(err instanceof Error ? err.message : "Download failed");
     }
   }
+
+  useEffect(() => {
+    if (!template || !selectedAutofillKey) {
+      return;
+    }
+
+    const selectedEntry = template.sheets
+      .flatMap((templateSheet) => {
+        const sheetAi = aiCells[templateSheet.name];
+        if (!sheetAi || sheetAi.size === 0) {
+          return [];
+        }
+
+        return Array.from(sheetAi, (ref) => ({
+          key: getAutofillKey(templateSheet.name, ref),
+          sheetName: templateSheet.name,
+        }));
+      })
+      .find((entry) => entry.key === selectedAutofillKey);
+
+    if (!selectedEntry || template.sheets[activeTab]?.name !== selectedEntry.sheetName) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      cellElementRefs.current[selectedAutofillKey]?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+        inline: "center",
+      });
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeTab, aiCells, selectedAutofillKey, template]);
 
   if (!template) {
     return (
@@ -519,16 +526,106 @@ export default function UnderwritingManager() {
     );
   }
 
+  const aiCountBySheet = Object.fromEntries(
+    template.sheets.map((templateSheet) => [templateSheet.name, aiCells[templateSheet.name]?.size || 0]),
+  );
+
+  const sourceThemeMap = buildSourceThemeMap([
+    ...documents.map((document) => document.filename),
+    ...Object.values(aiSources).flatMap((sheetSources) => Object.values(sheetSources)),
+  ]);
+
+  function getSourceThemeClass(sourceName: string | undefined): string {
+    if (!sourceName) {
+      return "";
+    }
+
+    return sourceThemeMap[sourceName] || "underwriting-source-theme-0";
+  }
+
+  const autofillEntries: AutofillEntry[] = template.sheets.flatMap((templateSheet) => {
+    const sheetAi = aiCells[templateSheet.name];
+    if (!sheetAi || sheetAi.size === 0) {
+      return [];
+    }
+
+    const sheetEdits = edits[templateSheet.name] || {};
+    const sheetFormulaValues = formulaValues[templateSheet.name] || {};
+    const sheetSources = aiSources[templateSheet.name] || {};
+
+    return Array.from(sheetAi)
+      .map((ref) => {
+        const position = parseCellRef(ref);
+        if (!position) {
+          return null;
+        }
+
+        const cell = templateSheet.data[position.row - 1]?.[position.col - 1] ?? null;
+        const resolvedValue = getResolvedCellValue(cell, sheetEdits, sheetFormulaValues);
+        return {
+          key: getAutofillKey(templateSheet.name, ref),
+          sheetName: templateSheet.name,
+          row: position.row,
+          col: position.col,
+          ref,
+          sourceName: sheetSources[ref] || "Uploaded documents",
+          displayValue: formatWorkbookDisplayValue(cell, resolvedValue) || toInputValue(resolvedValue) || "(blank)",
+          rawValue: toInputValue(resolvedValue) || "(blank)",
+        } satisfies AutofillEntry;
+      })
+      .filter((entry): entry is AutofillEntry => entry !== null)
+      .sort((left, right) => {
+        if (left.row !== right.row) {
+          return left.row - right.row;
+        }
+        return left.col - right.col;
+      });
+  });
+
+  const normalizedAutofillQuery = autofillQuery.trim().toLowerCase();
+  const filteredAutofillEntries = normalizedAutofillQuery
+    ? autofillEntries.filter((entry) =>
+        [entry.sheetName, entry.ref, entry.sourceName, entry.displayValue]
+          .join(" ")
+          .toLowerCase()
+          .includes(normalizedAutofillQuery),
+      )
+    : autofillEntries;
+  const filteredAutofillKeys = normalizedAutofillQuery
+    ? new Set(filteredAutofillEntries.map((entry) => entry.key))
+    : new Set<string>();
+  const navigationEntries = filteredAutofillEntries.length > 0 ? filteredAutofillEntries : autofillEntries;
+  const selectedAutofillEntry = autofillEntries.find((entry) => entry.key === selectedAutofillKey) || null;
+  const selectedAutofillIndex = selectedAutofillKey
+    ? navigationEntries.findIndex((entry) => entry.key === selectedAutofillKey)
+    : -1;
+
+  function focusAutofillEntry(entry: AutofillEntry) {
+    clearActiveCell();
+    setSelectedAutofillKey(entry.key);
+    const nextTabIndex = template ? template.sheets.findIndex((candidate) => candidate.name === entry.sheetName) : -1;
+    if (nextTabIndex >= 0) {
+      setActiveTab(nextTabIndex);
+    }
+  }
+
+  function moveAutofillSelection(direction: -1 | 1) {
+    if (navigationEntries.length === 0) {
+      return;
+    }
+
+    const currentIndex = selectedAutofillIndex >= 0 ? selectedAutofillIndex : direction > 0 ? -1 : navigationEntries.length;
+    const nextIndex = Math.max(0, Math.min(navigationEntries.length - 1, currentIndex + direction));
+    focusAutofillEntry(navigationEntries[nextIndex]);
+  }
+
   const sheet = template.sheets[activeTab];
   const sheetEdits = edits[sheet.name] || {};
   const sheetAi = aiCells[sheet.name] || new Set<string>();
   const sheetAiSources = aiSources[sheet.name] || {};
   const sheetFormulaValues = formulaValues[sheet.name] || {};
-  const rowSignals = sheet.data.map((row) =>
-    buildRowSignalText(row, sheetEdits, sheetFormulaValues),
-  );
   const columnWidths = Array.from({ length: sheet.maxCol }, (_, index) =>
-    getColumnWidth(sheet, sheetEdits, index, rowSignals, sheetFormulaValues),
+    getColumnWidth(sheet, sheetEdits, index, sheetFormulaValues),
   );
 
   function getResolvedValueForCell(cell: TemplateCell | null): CellValue {
@@ -695,7 +792,10 @@ export default function UnderwritingManager() {
             }}
             className={`underwriting-tab${index === activeTab ? " underwriting-tab-active" : ""}`}
           >
-            {tabSheet.name.length > 22 ? `${tabSheet.name.slice(0, 22)}…` : tabSheet.name}
+            <span>{tabSheet.name.length > 22 ? `${tabSheet.name.slice(0, 22)}…` : tabSheet.name}</span>
+            {aiCountBySheet[tabSheet.name] > 0 && (
+              <span className="underwriting-tab-count">{aiCountBySheet[tabSheet.name]}</span>
+            )}
           </button>
         ))}
       </div>
@@ -746,107 +846,201 @@ export default function UnderwritingManager() {
               </tr>
             </thead>
             <tbody>
-              {sheet.data.map((row, rowIndex) => {
-                const rowSignal = rowSignals[rowIndex];
+              {sheet.data.map((row, rowIndex) => (
+                <tr key={rowIndex + 1}>
+                  <th scope="row" className="underwriting-grid-row-header">
+                    {rowIndex + 1}
+                  </th>
+                  {Array.from({ length: sheet.maxCol }, (_, colIndex) => {
+                    const cell = row[colIndex] ?? null;
 
-                return (
-                  <tr key={rowIndex + 1}>
-                    <th scope="row" className="underwriting-grid-row-header">
-                      {rowIndex + 1}
-                    </th>
-                    {Array.from({ length: sheet.maxCol }, (_, colIndex) => {
-                      const cell = row[colIndex] ?? null;
-
-                      if (!cell) {
-                        return (
-                          <td
-                            key={`${rowIndex + 1}-${colIndex + 1}`}
-                            className="underwriting-grid-cell underwriting-grid-cell-empty"
-                          >
-                            <div className="underwriting-grid-cell-view" />
-                          </td>
-                        );
-                      }
-
-                      const ref = getCellRef(cell.r, cell.c);
-                      const resolvedValue = getResolvedValueForCell(cell);
-                      const isFormula = !!cell.f;
-                      const hasEdit = sheetEdits[ref] !== undefined;
-                      const isAi = sheetAi.has(ref);
-                      const aiSource = sheetAiSources[ref];
-                      const sourceThemeClass = getSourceThemeClass(aiSource);
-                      const isActive =
-                        activeCell?.sheetName === sheet.name &&
-                        activeCell.row === cell.r &&
-                        activeCell.col === cell.c;
-                      const isLabel = isLabelValue(resolvedValue);
-                      const isNumeric = typeof resolvedValue === "number";
-                      const cellSignal = getCellSignalText(
-                        row,
-                        colIndex,
-                        rowSignal,
-                        sheetEdits,
-                        sheetFormulaValues,
-                      );
-                      const displayValue = formatDisplayValue(resolvedValue, cellSignal);
-                      const className = [
-                        "underwriting-grid-cell",
-                        isFormula ? "underwriting-grid-cell-formula" : "",
-                        isLabel ? "underwriting-grid-cell-label" : "",
-                        isNumeric ? "underwriting-grid-cell-value" : "",
-                        hasEdit ? "underwriting-grid-cell-edited" : "",
-                        isAi ? "underwriting-grid-cell-ai" : "",
-                        isAi && aiSource ? "underwriting-grid-cell-ai-sourced" : "",
-                        sourceThemeClass,
-                        isActive ? "underwriting-grid-cell-active" : "",
-                      ]
-                        .filter(Boolean)
-                        .join(" ");
-                      const displayTitle =
-                        typeof resolvedValue === "string"
-                          ? resolvedValue
-                          : displayValue || ref;
-                      const title = aiSource
-                        ? `${displayTitle}\nFilled from: ${aiSource}`
-                        : displayTitle;
-
+                    if (!cell) {
                       return (
-                        <td key={ref} className={className}>
-                          {isActive ? (
-                            <input
-                              ref={activeInputRef}
-                              value={draftValue}
-                              onChange={(event) => setDraftValue(event.target.value)}
-                              onBlur={handleActiveInputBlur}
-                              onKeyDown={handleActiveInputKeyDown}
-                              className="underwriting-grid-input"
-                              aria-label={`Edit cell ${ref}`}
-                              title={title}
-                            />
-                          ) : isFormula ? (
-                            <div className="underwriting-grid-cell-view" title={title}>
-                              {displayValue}
-                            </div>
-                          ) : (
-                            <button
-                              type="button"
-                              className="underwriting-grid-button"
-                              onClick={() => activateCell(cell)}
-                              title={title}
-                              aria-label={`Edit cell ${ref}`}
-                            >
-                              {displayValue}
-                            </button>
-                          )}
+                        <td
+                          key={`${rowIndex + 1}-${colIndex + 1}`}
+                          className="underwriting-grid-cell underwriting-grid-cell-empty"
+                        >
+                          <div className="underwriting-grid-cell-view" />
                         </td>
                       );
-                    })}
-                  </tr>
-                );
-              })}
+                    }
+
+                    const ref = getCellRef(cell.r, cell.c);
+                    const resolvedValue = getResolvedValueForCell(cell);
+                    const isFormula = !!cell.f;
+                    const hasEdit = sheetEdits[ref] !== undefined;
+                    const isAi = sheetAi.has(ref);
+                    const aiSource = sheetAiSources[ref];
+                    const autofillKey = getAutofillKey(sheet.name, ref);
+                    const sourceThemeClass = getSourceThemeClass(aiSource);
+                    const isActive =
+                      activeCell?.sheetName === sheet.name &&
+                      activeCell.row === cell.r &&
+                      activeCell.col === cell.c;
+                    const isFilteredAutofillHit = filteredAutofillKeys.has(autofillKey);
+                    const isSelectedAutofill = selectedAutofillKey === autofillKey;
+                    const isLabel = isLabelValue(resolvedValue);
+                    const isNumeric = typeof resolvedValue === "number";
+                    const displayValue = formatWorkbookDisplayValue(cell, resolvedValue);
+                    const rawValueText = toInputValue(resolvedValue);
+                    const displayTitle =
+                      displayValue && displayValue !== rawValueText
+                        ? `${displayValue}\nRaw: ${rawValueText}`
+                        : displayValue || rawValueText || ref;
+                    const className = [
+                      "underwriting-grid-cell",
+                      isFormula ? "underwriting-grid-cell-formula" : "",
+                      isLabel ? "underwriting-grid-cell-label" : "",
+                      isNumeric ? "underwriting-grid-cell-value" : "",
+                      hasEdit ? "underwriting-grid-cell-edited" : "",
+                      isAi ? "underwriting-grid-cell-ai" : "",
+                      isAi && aiSource ? "underwriting-grid-cell-ai-sourced" : "",
+                      isFilteredAutofillHit ? "underwriting-grid-cell-search-hit" : "",
+                      isSelectedAutofill ? "underwriting-grid-cell-search-hit-active" : "",
+                      sourceThemeClass,
+                      isActive ? "underwriting-grid-cell-active" : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" ");
+                    const title = aiSource
+                      ? `${displayTitle}\nFilled from: ${aiSource}`
+                      : displayTitle;
+
+                    return (
+                      <td
+                        key={ref}
+                        className={className}
+                        ref={(node) => {
+                          cellElementRefs.current[autofillKey] = node;
+                        }}
+                      >
+                        {isActive ? (
+                          <input
+                            ref={activeInputRef}
+                            value={draftValue}
+                            onChange={(event) => setDraftValue(event.target.value)}
+                            onBlur={handleActiveInputBlur}
+                            onKeyDown={handleActiveInputKeyDown}
+                            className="underwriting-grid-input"
+                            aria-label={`Edit cell ${ref}`}
+                            title={title}
+                          />
+                        ) : isFormula ? (
+                          <div className="underwriting-grid-cell-view" title={title}>
+                            {displayValue}
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            className="underwriting-grid-button"
+                            onClick={() => activateCell(cell)}
+                            title={title}
+                            aria-label={`Edit cell ${ref}`}
+                          >
+                            {displayValue}
+                          </button>
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
+
+        {autofillEntries.length > 0 && (
+          <aside className="underwriting-autofill-panel" aria-label="Autofill matches">
+            <div className="underwriting-autofill-panel-header">
+              <div className="underwriting-autofill-panel-heading-row">
+                <div>
+                  <div className="underwriting-autofill-panel-title">Autofill Matches</div>
+                  <div className="underwriting-autofill-panel-subtitle">
+                    {filteredAutofillEntries.length} of {autofillEntries.length} locations
+                  </div>
+                </div>
+                <div className="underwriting-autofill-nav">
+                  <button
+                    type="button"
+                    className="underwriting-autofill-nav-button"
+                    onClick={() => moveAutofillSelection(-1)}
+                    disabled={navigationEntries.length === 0 || selectedAutofillIndex === 0}
+                    aria-label="Previous autofill match"
+                  >
+                    ←
+                  </button>
+                  <div className="underwriting-autofill-nav-status">
+                    {navigationEntries.length === 0
+                      ? "0 / 0"
+                      : `${Math.max(selectedAutofillIndex, 0) + 1} / ${navigationEntries.length}`}
+                  </div>
+                  <button
+                    type="button"
+                    className="underwriting-autofill-nav-button"
+                    onClick={() => moveAutofillSelection(1)}
+                    disabled={navigationEntries.length === 0 || selectedAutofillIndex === navigationEntries.length - 1}
+                    aria-label="Next autofill match"
+                  >
+                    →
+                  </button>
+                </div>
+              </div>
+              <input
+                value={autofillQuery}
+                onChange={(event) => setAutofillQuery(event.target.value)}
+                className="underwriting-autofill-search"
+                placeholder="Filter by sheet, cell, value, or document"
+                aria-label="Filter autofill locations"
+              />
+            </div>
+
+            <div className="underwriting-autofill-list">
+              {filteredAutofillEntries.length > 0 ? (
+                filteredAutofillEntries.map((entry) => {
+                  const isSelected = selectedAutofillKey === entry.key;
+                  const sourceThemeClass = getSourceThemeClass(entry.sourceName);
+                  return (
+                    <button
+                      key={entry.key}
+                      type="button"
+                      className={[
+                        "underwriting-autofill-item",
+                        isSelected ? "underwriting-autofill-item-active" : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" ")}
+                      onClick={() => focusAutofillEntry(entry)}
+                      title={`${entry.sheetName} ${entry.ref}\n${entry.sourceName}`}
+                    >
+                      <div className="underwriting-autofill-item-topline">
+                        <span className="underwriting-autofill-item-ref">{entry.sheetName} · {entry.ref}</span>
+                        <span className="underwriting-autofill-item-coordinates">Row {entry.row} · Column {colToLetter(entry.col)}</span>
+                      </div>
+                      <div className="underwriting-autofill-item-source-row">
+                        <span className={`underwriting-document-pill ${sourceThemeClass}`}>
+                          <span className="underwriting-document-dot" />
+                          <span className="underwriting-document-name">{entry.sourceName}</span>
+                        </span>
+                      </div>
+                      <div className="underwriting-autofill-item-details">
+                        <div className="underwriting-autofill-item-detail">
+                          <span className="underwriting-autofill-item-detail-label">Displayed</span>
+                          <span className="underwriting-autofill-item-value">{entry.displayValue}</span>
+                        </div>
+                        <div className="underwriting-autofill-item-detail">
+                          <span className="underwriting-autofill-item-detail-label">Raw value</span>
+                          <span className="underwriting-autofill-item-raw">{entry.rawValue}</span>
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })
+              ) : (
+                <div className="underwriting-autofill-empty">No autofill matches for the current filter.</div>
+              )}
+            </div>
+          </aside>
+        )}
       </div>
 
       <div className="underwriting-footer">
