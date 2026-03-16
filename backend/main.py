@@ -5,12 +5,14 @@ Uses Pinecone RAG + GPT multi-agent orchestration to evaluate zoning, site conte
 
 import os
 import io
+import json
 import logging
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from openai import OpenAI
 from pinecone import Pinecone, ServerlessSpec
 from pydantic import BaseModel
@@ -45,6 +47,7 @@ NAMESPACE_PROPERTY = os.getenv("NAMESPACE_PROPERTY", "PropertyContextStore")
 openai_client: OpenAI | None = None
 pinecone_client: Pinecone | None = None
 active_index_name: str = PINECONE_INDEX  # mutable — switched via API
+_template_store: dict = {}  # stores uploaded underwriting template bytes
 
 # Per-agent tunable settings
 agent_settings: dict = {
@@ -719,6 +722,222 @@ def _chunk_text(text: str, chunk_size: int = 800, overlap: int = 200) -> list[st
         chunks.append(text[start:end])
         start += chunk_size - overlap
     return [c for c in chunks if c.strip()]
+
+
+# ── Underwriting Template ───────────────────────────────────────────────
+
+def _safe_cell_value(val):
+    """Convert cell value to a JSON-serializable type."""
+    if val is None:
+        return None
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, float):
+        if val != val:  # NaN
+            return None
+        return round(val, 2)
+    if isinstance(val, int):
+        return val
+    if isinstance(val, str):
+        return val
+    return str(val)
+
+
+def _col_letter(col: int) -> str:
+    """Convert 1-based column number to Excel column letter(s)."""
+    result = ""
+    while col > 0:
+        col -= 1
+        result = chr(65 + col % 26) + result
+        col //= 26
+    return result
+
+
+@app.post("/api/underwriting/parse-template")
+async def parse_underwriting_template(file: UploadFile = File(...)):
+    """Upload an Excel underwriting template and return its parsed structure."""
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No filename provided")
+
+    content = await file.read()
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in (".xlsx", ".xls"):
+        raise HTTPException(status_code=400, detail="Only Excel files (.xlsx / .xls) are supported")
+
+    import openpyxl
+
+    wb_vals = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
+    wb_fmls = openpyxl.load_workbook(io.BytesIO(content), data_only=False)
+
+    sheets = []
+    for name in wb_vals.sheetnames:
+        ws_v = wb_vals[name]
+        ws_f = wb_fmls[name]
+        max_r = ws_v.max_row or 0
+        max_c = ws_v.max_column or 0
+
+        data = []
+        for r in range(1, max_r + 1):
+            row = []
+            for c in range(1, max_c + 1):
+                val = _safe_cell_value(ws_v.cell(r, c).value)
+                fml = ws_f.cell(r, c).value
+                is_formula = isinstance(fml, str) and fml.startswith("=")
+                if val is None and not is_formula:
+                    row.append(None)
+                else:
+                    cell = {"v": val if val is not None else 0, "r": r, "c": c}
+                    if is_formula:
+                        cell["f"] = True
+                    row.append(cell)
+            data.append(row)
+
+        sheets.append({"name": name, "data": data, "maxRow": max_r, "maxCol": max_c})
+
+    _template_store["current"] = {"filename": file.filename, "bytes": content}
+    logging.info(f"Parsed underwriting template: {file.filename} ({len(sheets)} sheets)")
+    return {"filename": file.filename, "sheets": sheets}
+
+
+@app.post("/api/underwriting/extract")
+async def extract_underwriting_values():
+    """Use RAG to extract values from uploaded source documents for each template sheet."""
+    if "current" not in _template_store:
+        raise HTTPException(status_code=400, detail="No template uploaded yet")
+
+    import openpyxl
+
+    # Check if there are documents to extract from
+    idx = _get_index()
+    stats = idx.describe_index_stats()
+    ns = stats.get("namespaces", {})
+    knowledge_count = ns.get(NAMESPACE_KNOWLEDGE, {}).get("vector_count", 0)
+    if knowledge_count == 0:
+        return {"updates": {}, "message": "No documents uploaded. Upload source documents first."}
+
+    wb = openpyxl.load_workbook(io.BytesIO(_template_store["current"]["bytes"]), data_only=True)
+    wb_f = openpyxl.load_workbook(io.BytesIO(_template_store["current"]["bytes"]), data_only=False)
+
+    all_updates: dict[str, dict] = {}
+
+    for name in wb.sheetnames:
+        # Skip auto-calculated sheets
+        if "(auto)" in name.lower():
+            continue
+
+        ws = wb[name]
+        ws_f_s = wb_f[name]
+        max_r = ws.max_row or 0
+        max_c = ws.max_column or 0
+
+        labels: list[str] = []
+        cell_descriptions: list[str] = []
+
+        for r in range(1, max_r + 1):
+            for c in range(1, max_c + 1):
+                val = ws.cell(r, c).value
+                fml = ws_f_s.cell(r, c).value
+                if isinstance(fml, str) and fml.startswith("="):
+                    continue
+                if val is None:
+                    continue
+                coord = f"{_col_letter(c)}{r}"
+                safe = _safe_cell_value(val)
+                cell_descriptions.append(f"{coord}={safe}")
+                if isinstance(val, str) and not val.replace(".", "").replace("-", "").replace(",", "").replace(" ", "").isdigit():
+                    labels.append(val)
+
+        if not cell_descriptions:
+            continue
+
+        # Query Pinecone with sheet labels as context
+        query_text = f"UAP underwriting {name}: " + " ".join(labels[:40])
+        query_embedding = get_embedding(query_text, client=openai_client, embedding_model=EMBEDDING_MODEL)
+
+        results = idx.query(
+            vector=query_embedding,
+            top_k=30,
+            namespace=NAMESPACE_KNOWLEDGE,
+            include_metadata=True,
+        )
+
+        chunks = [
+            m.get("metadata", {}).get("text", "")
+            for m in results.get("matches", [])
+            if m.get("metadata", {}).get("text")
+        ]
+        if not chunks:
+            continue
+
+        context_text = "\n---\n".join(chunks[:20])
+        cells_desc = "\n".join(cell_descriptions[:300])
+
+        prompt = (
+            f'You are filling a UAP underwriting Excel spreadsheet from source documents.\n\n'
+            f'Sheet: "{name}"\n'
+            f'Current cell values (CellRef=CurrentValue):\n{cells_desc}\n\n'
+            f'Source document excerpts:\n{context_text}\n\n'
+            f'Extract updated values from the source documents above. '
+            f'Return ONLY a JSON object mapping cell references (like "B5") to new values. '
+            f'Only include cells where the documents provide a clear, specific value. '
+            f'Use numbers for numeric fields. Omit cells with no clear value in the documents.'
+        )
+
+        try:
+            response = openai_client.chat.completions.create(
+                model=GENERATION_MODEL,
+                temperature=0.1,
+                messages=[
+                    {"role": "system", "content": "You extract structured data from documents into spreadsheet cells. Return only valid JSON."},
+                    {"role": "user", "content": prompt},
+                ],
+                response_format={"type": "json_object"},
+            )
+            result_text = response.choices[0].message.content.strip()
+            updates = json.loads(result_text)
+            if isinstance(updates, dict) and updates:
+                all_updates[name] = {k: v for k, v in updates.items() if isinstance(k, str)}
+        except Exception as e:
+            logging.warning(f"RAG extraction failed for sheet '{name}': {e}")
+
+    total_cells = sum(len(v) for v in all_updates.values())
+    logging.info(f"RAG extraction complete: {total_cells} cells across {len(all_updates)} sheets")
+    return {"updates": all_updates}
+
+
+@app.post("/api/underwriting/download")
+async def download_filled_template(req: dict):
+    """Apply cell updates to the stored template and return the filled .xlsx file."""
+    if "current" not in _template_store:
+        raise HTTPException(status_code=400, detail="No template uploaded")
+
+    import openpyxl
+
+    wb = openpyxl.load_workbook(io.BytesIO(_template_store["current"]["bytes"]))
+
+    updates = req.get("updates", {})
+    for sheet_name, cells in updates.items():
+        if sheet_name not in wb.sheetnames:
+            continue
+        ws = wb[sheet_name]
+        for ref, value in cells.items():
+            try:
+                ws[ref] = value
+            except Exception:
+                continue
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    base = os.path.splitext(_template_store["current"]["filename"])[0]
+    filename = f"{base}_filled.xlsx"
+
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 if __name__ == "__main__":

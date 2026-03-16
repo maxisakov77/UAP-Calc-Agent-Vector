@@ -423,3 +423,75 @@ export async function deleteBlueprint(id: string): Promise<{ deleted: string }> 
   }
   return res.json();
 }
+
+// ── Underwriting Template ──────────────────────────────────────────────
+
+export interface TemplateCell {
+  v: string | number | boolean | null;
+  r: number;
+  c: number;
+  f?: boolean;
+}
+
+export interface TemplateSheet {
+  name: string;
+  data: (TemplateCell | null)[][];
+  maxRow: number;
+  maxCol: number;
+}
+
+export interface ParsedTemplate {
+  filename: string;
+  sheets: TemplateSheet[];
+}
+
+export interface ExtractionResult {
+  updates: Record<string, Record<string, string | number>>;
+  message?: string;
+}
+
+export async function parseUnderwritingTemplate(file: File): Promise<ParsedTemplate> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await apiFetch(
+    `${API_BASE}/api/underwriting/parse-template`,
+    { method: "POST", body: form },
+    300_000,
+  );
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`Template parse failed (${res.status}): ${detail}`);
+  }
+  return res.json();
+}
+
+export async function extractUnderwritingValues(): Promise<ExtractionResult> {
+  const res = await apiFetch(
+    `${API_BASE}/api/underwriting/extract`,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
+    600_000,
+  );
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`Extraction failed (${res.status}): ${detail}`);
+  }
+  return res.json();
+}
+
+export async function downloadFilledTemplate(
+  updates: Record<string, Record<string, string | number>>,
+): Promise<Blob> {
+  const res = await apiFetch(
+    `${API_BASE}/api/underwriting/download`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ updates }),
+    },
+  );
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`Download failed (${res.status}): ${detail}`);
+  }
+  return res.blob();
+}

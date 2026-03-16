@@ -5,6 +5,7 @@ import ChatInput from "./ChatInput";
 import MessageBubble from "./MessageBubble";
 import Sidebar from "./Sidebar";
 import OnboardingGuide from "./OnboardingGuide";
+import UnderwritingManager from "./UnderwritingManager";
 import type { ChatMessage, PropertyContext } from "@/lib/api";
 import { sendChat } from "@/lib/api";
 
@@ -14,6 +15,7 @@ export default function ChatPage() {
   const [sources, setSources] = useState<{ filename: string; distance: number }[]>([]);
   const [loading, setLoading] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [mode, setMode] = useState<"chat" | "underwriting">("chat");
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -106,6 +108,34 @@ export default function ChatPage() {
           <h1 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: "var(--blue-accent)" }}>
             UAP 485-x NYC Development Expert
           </h1>
+          <div style={{ display: "flex", gap: 2, marginLeft: 12 }}>
+            <button
+              onClick={() => setMode("chat")}
+              style={{
+                padding: "4px 12px",
+                background: mode === "chat" ? "var(--blue)" : "transparent",
+                border: "1px solid var(--border-color)",
+                color: mode === "chat" ? "var(--foreground)" : "var(--brand-granite-gray)",
+                cursor: "pointer",
+                fontSize: 12,
+              }}
+            >
+              Chat
+            </button>
+            <button
+              onClick={() => setMode("underwriting")}
+              style={{
+                padding: "4px 12px",
+                background: mode === "underwriting" ? "var(--blue)" : "transparent",
+                border: "1px solid var(--border-color)",
+                color: mode === "underwriting" ? "var(--foreground)" : "var(--brand-granite-gray)",
+                cursor: "pointer",
+                fontSize: 12,
+              }}
+            >
+              Underwriting
+            </button>
+          </div>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
             {activeProperty && (
               <span
@@ -129,36 +159,42 @@ export default function ChatPage() {
           </div>
         </header>
 
-        {/* Messages */}
-        <div
-          style={{
-            flex: 1,
-            overflowY: "auto",
-            padding: "20px 24px",
-            display: "flex",
-            flexDirection: "column",
-            gap: 16,
-          }}
-        >
-          {messages.length === 0 && !loading && <OnboardingGuide />}
+        {mode === "chat" ? (
+          <>
+            {/* Messages */}
+            <div
+              style={{
+                flex: 1,
+                overflowY: "auto",
+                padding: "20px 24px",
+                display: "flex",
+                flexDirection: "column",
+                gap: 16,
+              }}
+            >
+              {messages.length === 0 && !loading && <OnboardingGuide />}
 
-          {messages.map((msg, i) => (
-            <MessageBubble key={i} message={msg} />
-          ))}
+              {messages.map((msg, i) => (
+                <MessageBubble key={i} message={msg} />
+              ))}
 
-          {loading && (
-            <div className="animate-in" style={{ display: "flex", gap: 6, padding: "8px 0" }}>
-              <span className="typing-dot" />
-              <span className="typing-dot" />
-              <span className="typing-dot" />
+              {loading && (
+                <div className="animate-in" style={{ display: "flex", gap: 6, padding: "8px 0" }}>
+                  <span className="typing-dot" />
+                  <span className="typing-dot" />
+                  <span className="typing-dot" />
+                </div>
+              )}
+
+              <div ref={bottomRef} />
             </div>
-          )}
 
-          <div ref={bottomRef} />
-        </div>
-
-        {/* Input */}
-        <ChatInput onSend={handleSend} disabled={loading} />
+            {/* Input */}
+            <ChatInput onSend={handleSend} disabled={loading} />
+          </>
+        ) : (
+          <UnderwritingManager />
+        )}
       </div>
     </div>
   );
