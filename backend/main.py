@@ -41,6 +41,18 @@ PINECONE_INDEX = os.getenv("PINECONE_INDEX", "und1")
 NAMESPACE_CONTEXT = os.getenv("NAMESPACE_CONTEXT", "ContextLibrary")
 NAMESPACE_KNOWLEDGE = os.getenv("NAMESPACE_KNOWLEDGE", "KnowledgeStore")
 NAMESPACE_PROPERTY = os.getenv("NAMESPACE_PROPERTY", "PropertyContextStore")
+DEFAULT_CORS_ALLOW_ORIGINS = ("http://localhost:3000", "http://localhost:3001")
+
+
+def _get_csv_env(name: str, default: tuple[str, ...]) -> list[str]:
+    raw_value = os.getenv(name, "")
+    if not raw_value.strip():
+        return list(default)
+    values = [value.strip() for value in raw_value.split(",") if value.strip()]
+    return values or list(default)
+
+
+CORS_ALLOW_ORIGINS = _get_csv_env("CORS_ALLOW_ORIGINS", DEFAULT_CORS_ALLOW_ORIGINS)
 
 # ── Global clients (initialized on startup) ────────────────────────────
 
@@ -118,7 +130,7 @@ app = FastAPI(title="UAP 485-x NYC Development Expert API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"],
+    allow_origins=CORS_ALLOW_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
