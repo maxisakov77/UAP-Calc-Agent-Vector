@@ -441,11 +441,20 @@ body {
   border-bottom: 1px solid rgba(238,85,85,0.2);
 }
 
+.underwriting-warning-bar {
+  padding: 8px 16px;
+  font-size: 12px;
+  color: #facc15;
+  background: rgba(250,204,21,0.08);
+  border-bottom: 1px solid rgba(250,204,21,0.18);
+}
+
 .underwriting-footer {
   padding: 8px 16px;
   border-top: 1px solid var(--border-color);
   background: var(--bg-dark);
   display: flex;
+  flex-wrap: wrap;
   gap: 16px;
   font-size: 11px;
   color: var(--brand-granite-gray);

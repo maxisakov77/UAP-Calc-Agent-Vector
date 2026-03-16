@@ -165,8 +165,9 @@ if (($excludedPorts -contains $backendPort) -or ($excludedPorts -contains $front
     throw "Random port selection failed: frontend=$frontendPort backend=$backendPort"
 }
 
-$backendUrl = "http://localhost:$backendPort"
-$frontendUrl = "http://localhost:$frontendPort"
+$loopbackHost = "127.0.0.1"
+$backendUrl = "http://${loopbackHost}:$backendPort"
+$frontendUrl = "http://${loopbackHost}:$frontendPort"
 $settingsUrl = "$backendUrl/api/settings"
 
 $logDir = Join-Path $env:TEMP "UAP-Calc-Agent-Vector"

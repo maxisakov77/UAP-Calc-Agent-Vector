@@ -450,6 +450,20 @@ export interface ExtractionResult {
   message?: string;
 }
 
+export interface UnderwritingRecalculationWarning {
+  sheet: string;
+  message: string;
+  refs?: string[];
+}
+
+export interface UnderwritingRecalculationResult {
+  formulaValues: Record<
+    string,
+    Record<string, string | number | boolean | null>
+  >;
+  warnings?: UnderwritingRecalculationWarning[];
+}
+
 export async function parseUnderwritingTemplate(file: File): Promise<ParsedTemplate> {
   const form = new FormData();
   form.append("file", file);
@@ -474,6 +488,25 @@ export async function extractUnderwritingValues(): Promise<ExtractionResult> {
   if (!res.ok) {
     const detail = await res.text();
     throw new Error(`Extraction failed (${res.status}): ${detail}`);
+  }
+  return res.json();
+}
+
+export async function recalculateUnderwritingFormulaValues(
+  updates: Record<string, Record<string, string | number>>,
+): Promise<UnderwritingRecalculationResult> {
+  const res = await apiFetch(
+    `${API_BASE}/api/underwriting/recalculate`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ updates }),
+    },
+    300_000,
+  );
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`Formula recalculation failed (${res.status}): ${detail}`);
   }
   return res.json();
 }

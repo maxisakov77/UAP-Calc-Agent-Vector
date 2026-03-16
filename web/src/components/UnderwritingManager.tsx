@@ -6,13 +6,16 @@ import {
   extractUnderwritingValues,
   listDocuments,
   parseUnderwritingTemplate,
+  recalculateUnderwritingFormulaValues,
   type DocumentInfo,
   type ParsedTemplate,
   type TemplateCell,
   type TemplateSheet,
+  type UnderwritingRecalculationWarning,
 } from "@/lib/api";
 
 type CellValue = string | number | boolean | null;
+type FormulaValuesBySheet = Record<string, Record<string, CellValue>>;
 
 type ActiveCell = {
   sheetName: string;
@@ -79,9 +82,17 @@ function normalizeInputValue(value: string): string | number {
 function getResolvedCellValue(
   cell: TemplateCell | null,
   sheetEdits: Record<string, string | number>,
+  sheetFormulaValues?: Record<string, CellValue>,
 ): CellValue {
   if (!cell) return null;
   const ref = getCellRef(cell.r, cell.c);
+  if (
+    cell.f &&
+    sheetFormulaValues &&
+    Object.prototype.hasOwnProperty.call(sheetFormulaValues, ref)
+  ) {
+    return sheetFormulaValues[ref];
+  }
   return sheetEdits[ref] !== undefined ? sheetEdits[ref] : cell.v;
 }
 
@@ -117,10 +128,11 @@ function isLabelValue(value: CellValue): value is string {
 function buildRowSignalText(
   row: (TemplateCell | null)[],
   sheetEdits: Record<string, string | number>,
+  sheetFormulaValues?: Record<string, CellValue>,
 ): string {
   return row
     .map((cell) => {
-      const value = getResolvedCellValue(cell, sheetEdits);
+      const value = getResolvedCellValue(cell, sheetEdits, sheetFormulaValues);
       if (typeof value !== "string") return "";
 
       const trimmed = value.trim();
@@ -138,9 +150,14 @@ function getCellSignalText(
   colIndex: number,
   rowSignal: string,
   sheetEdits: Record<string, string | number>,
+  sheetFormulaValues?: Record<string, CellValue>,
 ): string {
   for (let index = colIndex - 1; index >= 0; index--) {
-    const candidate = getResolvedCellValue(row[index] ?? null, sheetEdits);
+    const candidate = getResolvedCellValue(
+      row[index] ?? null,
+      sheetEdits,
+      sheetFormulaValues,
+    );
     if (typeof candidate !== "string") {
       continue;
     }
@@ -188,6 +205,7 @@ function getColumnWidth(
   sheet: TemplateSheet,
   sheetEdits: Record<string, string | number>,
   colIndex: number,
+  sheetFormulaValues?: Record<string, CellValue>,
 ): number {
   let numericCount = 0;
   let nonEmptyCount = 0;
@@ -195,7 +213,7 @@ function getColumnWidth(
 
   for (let rowIndex = 0; rowIndex < sheet.maxRow; rowIndex++) {
     const cell = sheet.data[rowIndex]?.[colIndex] ?? null;
-    const value = getResolvedCellValue(cell, sheetEdits);
+    const value = getResolvedCellValue(cell, sheetEdits, sheetFormulaValues);
 
     if (value === null || value === "") {
       continue;
@@ -272,8 +290,11 @@ export default function UnderwritingManager() {
   const [edits, setEdits] = useState<Record<string, Record<string, string | number>>>({});
   const [aiCells, setAiCells] = useState<Record<string, Set<string>>>({});
   const [documents, setDocuments] = useState<DocumentInfo[]>([]);
+  const [formulaValues, setFormulaValues] = useState<FormulaValuesBySheet>({});
+  const [formulaWarnings, setFormulaWarnings] = useState<UnderwritingRecalculationWarning[]>([]);
   const [uploading, setUploading] = useState(false);
   const [extracting, setExtracting] = useState(false);
+  const [recalculating, setRecalculating] = useState(false);
   const [loadingDocuments, setLoadingDocuments] = useState(true);
   const [error, setError] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
@@ -282,6 +303,7 @@ export default function UnderwritingManager() {
   const fileRef = useRef<HTMLInputElement>(null);
   const activeInputRef = useRef<HTMLInputElement>(null);
   const skipBlurCommitRef = useRef(false);
+  const recalcRequestIdRef = useRef(0);
 
   const refreshDocuments = useCallback(async () => {
     setLoadingDocuments(true);
@@ -310,6 +332,59 @@ export default function UnderwritingManager() {
     setDraftValue("");
   }
 
+  const runRecalculation = useCallback(
+    async (nextEdits: Record<string, Record<string, string | number>>) => {
+      const requestId = ++recalcRequestIdRef.current;
+      setRecalculating(true);
+
+      try {
+        const result = await recalculateUnderwritingFormulaValues(nextEdits);
+        if (requestId !== recalcRequestIdRef.current) {
+          return;
+        }
+        setFormulaValues(result.formulaValues || {});
+        setFormulaWarnings(result.warnings || []);
+        setError((previous) =>
+          previous.startsWith("Formula recalculation failed") ? "" : previous,
+        );
+      } catch (err) {
+        if (requestId !== recalcRequestIdRef.current) {
+          return;
+        }
+        setFormulaWarnings([]);
+        setError(
+          err instanceof Error ? err.message : "Formula recalculation failed",
+        );
+      } finally {
+        if (requestId === recalcRequestIdRef.current) {
+          setRecalculating(false);
+        }
+      }
+    },
+    [],
+  );
+
+  function applyCellChange(
+    sheetName: string,
+    row: number,
+    col: number,
+    raw: string,
+  ): Record<string, Record<string, string | number>> {
+    const ref = getCellRef(row, col);
+    const value = normalizeInputValue(raw);
+    let nextEdits: Record<string, Record<string, string | number>> = {};
+
+    setEdits((prev) => {
+      nextEdits = {
+        ...prev,
+        [sheetName]: { ...(prev[sheetName] || {}), [ref]: value },
+      };
+      return nextEdits;
+    });
+
+    return nextEdits;
+  }
+
   async function handleUpload(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -324,8 +399,11 @@ export default function UnderwritingManager() {
       setTemplate(parsed);
       setEdits({});
       setAiCells({});
+      setFormulaValues({});
+      setFormulaWarnings([]);
       setActiveTab(0);
       setStatusMessage(`Loaded ${parsed.filename} with ${parsed.sheets.length} sheet${parsed.sheets.length === 1 ? "" : "s"}.`);
+      void runRecalculation({});
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed");
     } finally {
@@ -335,13 +413,7 @@ export default function UnderwritingManager() {
   }
 
   function handleCellChange(sheetName: string, row: number, col: number, raw: string) {
-    const ref = getCellRef(row, col);
-    const value = normalizeInputValue(raw);
-
-    setEdits((prev) => ({
-      ...prev,
-      [sheetName]: { ...(prev[sheetName] || {}), [ref]: value },
-    }));
+    return applyCellChange(sheetName, row, col, raw);
   }
 
   async function handleExtract() {
@@ -358,17 +430,20 @@ export default function UnderwritingManager() {
       }
 
       const newAi: Record<string, Set<string>> = {};
+      let mergedEdits: Record<string, Record<string, string | number>> = {};
       setEdits((prev) => {
         const merged = { ...prev };
         for (const [sheetName, cells] of Object.entries(result.updates)) {
           merged[sheetName] = { ...(merged[sheetName] || {}), ...cells };
           newAi[sheetName] = new Set(Object.keys(cells));
         }
+        mergedEdits = merged;
         return merged;
       });
       setAiCells(newAi);
       const updatedCount = Object.values(result.updates).reduce((sum, cells) => sum + Object.keys(cells).length, 0);
       setStatusMessage(`Auto-filled ${updatedCount} cell${updatedCount === 1 ? "" : "s"} from uploaded documents.`);
+      void runRecalculation(mergedEdits);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Extraction failed");
     } finally {
@@ -433,13 +508,16 @@ export default function UnderwritingManager() {
   const sheet = template.sheets[activeTab];
   const sheetEdits = edits[sheet.name] || {};
   const sheetAi = aiCells[sheet.name] || new Set<string>();
-  const rowSignals = sheet.data.map((row) => buildRowSignalText(row, sheetEdits));
+  const sheetFormulaValues = formulaValues[sheet.name] || {};
+  const rowSignals = sheet.data.map((row) =>
+    buildRowSignalText(row, sheetEdits, sheetFormulaValues),
+  );
   const columnWidths = Array.from({ length: sheet.maxCol }, (_, index) =>
-    getColumnWidth(sheet, sheetEdits, index),
+    getColumnWidth(sheet, sheetEdits, index, sheetFormulaValues),
   );
 
   function getResolvedValueForCell(cell: TemplateCell | null): CellValue {
-    return getResolvedCellValue(cell, sheetEdits);
+    return getResolvedCellValue(cell, sheetEdits, sheetFormulaValues);
   }
 
   function activateCell(cell: TemplateCell) {
@@ -474,8 +552,14 @@ export default function UnderwritingManager() {
       return;
     }
 
-    handleCellChange(activeCell.sheetName, activeCell.row, activeCell.col, draftValue);
+    const nextEdits = handleCellChange(
+      activeCell.sheetName,
+      activeCell.row,
+      activeCell.col,
+      draftValue,
+    );
     openCellByPosition(nextCell);
+    void runRecalculation(nextEdits);
   }
 
   function handleActiveInputBlur() {
@@ -607,6 +691,22 @@ export default function UnderwritingManager() {
         </div>
       )}
 
+      {formulaWarnings.length > 0 && (
+        <div className="underwriting-warning-bar">
+          {formulaWarnings
+            .map((warning) => {
+              const refs =
+                warning.refs && warning.refs.length > 0
+                  ? ` (${warning.refs.join(", ")})`
+                  : "";
+              return warning.sheet
+                ? `${warning.sheet}: ${warning.message}${refs}`
+                : `${warning.message}${refs}`;
+            })
+            .join(" | ")}
+        </div>
+      )}
+
       <div className="underwriting-grid-shell">
         <div className="underwriting-grid-scroll">
           <table className="underwriting-grid-table">
@@ -669,6 +769,7 @@ export default function UnderwritingManager() {
                         colIndex,
                         rowSignal,
                         sheetEdits,
+                        sheetFormulaValues,
                       );
                       const displayValue = formatDisplayValue(resolvedValue, cellSignal);
                       const className = [
@@ -731,6 +832,11 @@ export default function UnderwritingManager() {
         </span>
         <span>{Object.keys(sheetEdits).length} edits</span>
         {sheetAi.size > 0 && <span>{sheetAi.size} AI-filled</span>}
+        <span>
+          {recalculating
+            ? "Recalculating formulas..."
+            : "Formulas recalculate in-app and stay intact on export"}
+        </span>
         {activeCell?.sheetName === sheet.name && <span>Active: {activeCell.ref}</span>}
       </div>
     </div>

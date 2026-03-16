@@ -28,6 +28,11 @@ from property_models import (
 )
 from property_service import property_service
 from property_store import delete_property_context, fetch_property_context, upsert_property_context
+from underwriting_calculator import (
+    build_underwriting_calculation_context,
+    calculate_underwriting_formula_values,
+    enable_workbook_recalculation,
+)
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
 
@@ -152,6 +157,10 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     reply: str
     sources: list[dict]
+
+
+class UnderwritingUpdatesRequest(BaseModel):
+    updates: dict[str, dict[str, str | int | float]] = {}
 
 
 def _get_index():
@@ -784,6 +793,7 @@ async def parse_underwriting_template(file: UploadFile = File(...)):
     wb_fmls = openpyxl.load_workbook(io.BytesIO(content), data_only=False)
 
     sheets = []
+    formula_refs_by_sheet: dict[str, list[str]] = {}
     for name in wb_vals.sheetnames:
         ws_v = wb_vals[name]
         ws_f = wb_fmls[name]
@@ -791,6 +801,7 @@ async def parse_underwriting_template(file: UploadFile = File(...)):
         max_c = ws_v.max_column or 0
 
         data = []
+        formula_refs: list[str] = []
         for r in range(1, max_r + 1):
             row = []
             for c in range(1, max_c + 1):
@@ -800,15 +811,27 @@ async def parse_underwriting_template(file: UploadFile = File(...)):
                 if val is None and not is_formula:
                     row.append(None)
                 else:
-                    cell = {"v": val if val is not None else 0, "r": r, "c": c}
+                    cell = {"v": val, "r": r, "c": c}
                     if is_formula:
                         cell["f"] = True
+                        formula_refs.append(f"{_col_letter(c)}{r}")
                     row.append(cell)
             data.append(row)
 
         sheets.append({"name": name, "data": data, "maxRow": max_r, "maxCol": max_c})
+        formula_refs_by_sheet[name] = formula_refs
 
-    _template_store["current"] = {"filename": file.filename, "bytes": content}
+    calc_context = build_underwriting_calculation_context(
+        file.filename,
+        content,
+        formula_refs_by_sheet,
+    )
+    _template_store["current"] = {
+        "filename": file.filename,
+        "bytes": content,
+        "formula_refs_by_sheet": formula_refs_by_sheet,
+        "calc_context": calc_context,
+    }
     logging.info(f"Parsed underwriting template: {file.filename} ({len(sheets)} sheets)")
     return {"filename": file.filename, "sheets": sheets}
 
@@ -919,8 +942,25 @@ async def extract_underwriting_values():
     return {"updates": all_updates}
 
 
+@app.post("/api/underwriting/recalculate")
+async def recalculate_underwriting_formulas(req: UnderwritingUpdatesRequest):
+    """Recalculate workbook formulas using current cell updates without mutating the workbook."""
+    if "current" not in _template_store:
+        raise HTTPException(status_code=400, detail="No template uploaded")
+
+    template = _template_store["current"]
+    formula_values, warnings = calculate_underwriting_formula_values(
+        template.get("calc_context"),
+        req.updates,
+    )
+    return {
+        "formulaValues": formula_values,
+        "warnings": [warning.to_dict() for warning in warnings],
+    }
+
+
 @app.post("/api/underwriting/download")
-async def download_filled_template(req: dict):
+async def download_filled_template(req: UnderwritingUpdatesRequest):
     """Apply cell updates to the stored template and return the filled .xlsx file."""
     if "current" not in _template_store:
         raise HTTPException(status_code=400, detail="No template uploaded")
@@ -929,7 +969,7 @@ async def download_filled_template(req: dict):
 
     wb = openpyxl.load_workbook(io.BytesIO(_template_store["current"]["bytes"]))
 
-    updates = req.get("updates", {})
+    updates = req.updates
     for sheet_name, cells in updates.items():
         if sheet_name not in wb.sheetnames:
             continue
@@ -939,6 +979,8 @@ async def download_filled_template(req: dict):
                 ws[ref] = value
             except Exception:
                 continue
+
+    enable_workbook_recalculation(wb)
 
     output = io.BytesIO()
     wb.save(output)
