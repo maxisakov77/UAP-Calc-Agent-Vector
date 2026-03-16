@@ -1,9 +1,13 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 // Helper: fetch with a generous timeout and clear error messages
-async function apiFetch(url: string, init?: RequestInit): Promise<Response> {
+async function apiFetch(
+  url: string,
+  init?: RequestInit,
+  timeoutMs = 120_000,
+): Promise<Response> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 120_000); // 2 min global max
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetch(url, { ...init, signal: controller.signal });
   } catch (err) {
@@ -60,10 +64,11 @@ export async function sendChat(
 export async function uploadDocument(file: File): Promise<UploadResponse> {
   const form = new FormData();
   form.append("file", file);
-  const res = await apiFetch(`${API_BASE}/api/upload`, {
-    method: "POST",
-    body: form,
-  });
+  const res = await apiFetch(
+    `${API_BASE}/api/upload`,
+    { method: "POST", body: form },
+    600_000, // 10 min — large docs need embedding per chunk
+  );
   if (!res.ok) {
     const detail = await res.text();
     throw new Error(`Upload failed (${res.status}): ${detail}`);

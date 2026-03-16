@@ -100,6 +100,12 @@ body {
   }
 }
 
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* Chat bubble typing indicator */
 @keyframes blink {
   0%,

@@ -7,6 +7,14 @@ import PropertyWizard from "./PropertyWizard";
 import BlueprintManager from "./BlueprintManager";
 import AgentSettings from "./AgentSettings";
 
+type FileStatus = "pending" | "uploading" | "done" | "error";
+interface QueuedFile {
+  file: File;
+  status: FileStatus;
+  chunks?: number;
+  error?: string;
+}
+
 export default function Sidebar({
   onPropertyChange,
 }: {
@@ -14,6 +22,7 @@ export default function Sidebar({
 }) {
   const [documents, setDocuments] = useState<DocumentInfo[]>([]);
   const [totalChunks, setTotalChunks] = useState(0);
+  const [queue, setQueue] = useState<QueuedFile[]>([]);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
@@ -43,20 +52,33 @@ export default function Sidebar({
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
+    const items: QueuedFile[] = Array.from(files).map((f) => ({
+      file: f,
+      status: "pending" as FileStatus,
+    }));
+    setQueue(items);
     setUploading(true);
     setError("");
 
-    try {
-      for (const file of Array.from(files)) {
-        await uploadDocument(file);
+    for (let i = 0; i < items.length; i++) {
+      items[i].status = "uploading";
+      setQueue([...items]);
+      try {
+        const res = await uploadDocument(items[i].file);
+        items[i].status = "done";
+        items[i].chunks = res.chunks;
+      } catch (err) {
+        items[i].status = "error";
+        items[i].error = err instanceof Error ? err.message : "Upload failed";
       }
-      await refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Upload failed");
-    } finally {
-      setUploading(false);
-      if (fileRef.current) fileRef.current.value = "";
+      setQueue([...items]);
     }
+
+    await refresh();
+    setUploading(false);
+    if (fileRef.current) fileRef.current.value = "";
+    // Clear the queue after a short delay so user can see final state
+    setTimeout(() => setQueue([]), 4000);
   }
 
   async function handleDelete(filename: string) {
@@ -127,9 +149,84 @@ export default function Sidebar({
               fontWeight: 600,
             }}
           >
-            {uploading ? "Uploading..." : "+ Upload Files"}
+            {uploading
+              ? `Uploading ${queue.filter((q) => q.status === "done").length}/${queue.length}...`
+              : "+ Upload Files"}
           </button>
         </div>
+
+        {/* Upload Queue */}
+        {queue.length > 0 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+            {queue.map((q, i) => (
+              <div
+                key={i}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "6px 8px",
+                  fontSize: 12,
+                  background: "var(--bg-card)",
+                  border: `1px solid ${
+                    q.status === "error"
+                      ? "rgba(238,85,85,0.3)"
+                      : q.status === "done"
+                        ? "rgba(85,238,85,0.3)"
+                        : "var(--glass-border)"
+                  }`,
+                }}
+              >
+                <span style={{ flexShrink: 0, width: 16, textAlign: "center" }}>
+                  {q.status === "pending" && (
+                    <span style={{ color: "var(--brand-granite-gray)" }}>○</span>
+                  )}
+                  {q.status === "uploading" && (
+                    <span
+                      style={{
+                        display: "inline-block",
+                        width: 12,
+                        height: 12,
+                        border: "2px solid var(--blue-accent)",
+                        borderTopColor: "transparent",
+                        borderRadius: "50%",
+                        animation: "spin 0.8s linear infinite",
+                      }}
+                    />
+                  )}
+                  {q.status === "done" && (
+                    <span style={{ color: "#5e5" }}>✓</span>
+                  )}
+                  {q.status === "error" && (
+                    <span style={{ color: "#e55" }}>✕</span>
+                  )}
+                </span>
+                <span
+                  style={{
+                    flex: 1,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    color:
+                      q.status === "error"
+                        ? "#e55"
+                        : q.status === "done"
+                          ? "var(--foreground)"
+                          : "var(--brand-granite-gray)",
+                  }}
+                >
+                  {q.file.name}
+                </span>
+                <span style={{ flexShrink: 0, fontSize: 11, color: "var(--brand-granite-gray)" }}>
+                  {q.status === "pending" && "queued"}
+                  {q.status === "uploading" && "processing…"}
+                  {q.status === "done" && `${q.chunks} chunks`}
+                  {q.status === "error" && (q.error ?? "failed")}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Error */}
         {error && (
