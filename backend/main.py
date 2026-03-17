@@ -58,6 +58,34 @@ def _get_csv_env(name: str, default: tuple[str, ...]) -> list[str]:
     return values or list(default)
 
 
+import re as _re
+
+_DOMAIN_KEYWORDS = _re.compile(
+    r"uap|485[\-\s]?x|zoning|far\b|floor area ratio|underwriting|rent roll|"
+    r"t[\-\s]?12|noi\b|cap rate|debt service|dscr|affordable housing|"
+    r"ami\b|hpd|hdc|nyc housing|tax abatement|tax exemption|"
+    r"operating (expenses?|statement)|pro ?forma|rent stabiliz|"
+    r"offering memorandum|appraisal|bbl\b|borough|lot area|building area|"
+    r"development (strategy|scenario|site)|buildable|residential far|"
+    r"commercial far|community facility",
+    _re.IGNORECASE,
+)
+
+_SITE_KEYWORDS = _re.compile(
+    r"\b(this|the|our|my)\s+(site|property|building|parcel|lot|project)\b",
+    _re.IGNORECASE,
+)
+
+
+def _is_domain_query(query: str, context) -> bool:
+    """Return True if *query* is within the NYC UAP / 485-x domain."""
+    if _DOMAIN_KEYWORDS.search(query):
+        return True
+    if _SITE_KEYWORDS.search(query) and context is not None:
+        return True
+    return False
+
+
 CORS_ALLOW_ORIGINS = _get_csv_env("CORS_ALLOW_ORIGINS", DEFAULT_CORS_ALLOW_ORIGINS)
 
 # ── Global clients (initialized on startup) ────────────────────────────
@@ -1072,7 +1100,8 @@ async def extract_underwriting_values():
     ROWS_PER_BATCH = 40
 
     for name in wb.sheetnames:
-        if "(auto)" in name.lower():
+        name_lower = name.lower()
+        if "(auto)" in name_lower or name_lower.endswith("auto") or " auto" in name_lower:
             logging.info(f"  ⏭ Skipping sheet '{name}' (auto-calculated)")
             continue
 
@@ -1250,7 +1279,9 @@ async def extract_underwriting_values():
                 f'6. Confidence: "high" = explicitly stated in source, "medium" = reasonable inference, '
                 f'   "low" = educated guess or industry standard assumption.\n'
                 f'7. BE AGGRESSIVE — fill as many cells as possible.  It is better to fill a cell with '
-                f'   medium/low confidence than to leave it empty.'
+                f'   medium/low confidence than to leave it empty.\n'
+                f'8. NEVER fill a numeric cell with 0 as a placeholder or guess.  Only use 0 if the '
+                f'   source document explicitly states the value is zero.'
             )
 
             sys_msg = (
@@ -1294,6 +1325,10 @@ async def extract_underwriting_values():
                                 confidence = raw_confidence.lower()
 
                         if not isinstance(value, (str, int, float, bool)) and value is not None:
+                            continue
+
+                        # Discard zero-value low-confidence fills — likely hallucinated placeholders
+                        if value == 0 and (confidence or "medium") == "low":
                             continue
 
                         sheet_updates[ref] = value

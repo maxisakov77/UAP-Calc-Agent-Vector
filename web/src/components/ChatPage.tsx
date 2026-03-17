@@ -62,13 +62,22 @@ export default function ChatPage() {
   }
 
   return (
-    <div style={{ display: "flex", height: "100vh", background: "var(--bg-main)" }}>
+    <div
+      style={{
+        display: "flex",
+        height: "100dvh",
+        minHeight: "100vh",
+        background: "var(--bg-main)",
+        overflow: "hidden",
+      }}
+    >
       {/* Sidebar */}
       {sidebarOpen && (
         <div
           style={{
             width: 320,
             minWidth: 320,
+            minHeight: 0,
             borderRight: "1px solid var(--border-color)",
             background: "var(--bg-dark)",
             display: "flex",
@@ -80,7 +89,16 @@ export default function ChatPage() {
       )}
 
       {/* Main Chat Area */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+      <div
+        style={{
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
+          minWidth: 0,
+          minHeight: 0,
+          overflow: "hidden",
+        }}
+      >
         {/* Header */}
         <header
           style={{
