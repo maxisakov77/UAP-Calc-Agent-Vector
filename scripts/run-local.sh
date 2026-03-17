@@ -56,8 +56,8 @@ if [[ "${1:-}" == "stop" ]]; then
 fi
 
 # ── resolve ports ───────────────────────────────────────────────────
-BACKEND_PORT="${1:-45123}"
-FRONTEND_PORT="${2:-35095}"
+BACKEND_PORT="${1:-$(free_port)}"
+FRONTEND_PORT="${2:-$(free_port)}"
 
 # ── stop any previous instances ─────────────────────────────────────
 echo "Cleaning up previous instances…"
