@@ -840,9 +840,9 @@ def _chunk_text(text: str, chunk_size: int = 800, overlap: int = 200) -> list[st
 def _select_diversified_source_chunks(
     matches: list[dict],
     *,
-    max_sources: int = 8,
-    max_chunks_per_source: int = 3,
-    max_total_chunks: int = 20,
+    max_sources: int = 10,
+    max_chunks_per_source: int = 8,
+    max_total_chunks: int = 40,
 ) -> tuple[list[str], dict[str, str]]:
     """Balance retrieved chunks across documents so one file does not dominate extraction."""
     chunks_by_source: dict[str, list[tuple[int | None, str]]] = {}
@@ -894,6 +894,60 @@ def _select_diversified_source_chunks(
         round_index += 1
 
     return source_chunks, source_name_lookup
+
+
+def _pick_relevant_glossary_sections(labels: list[str], sheet_name: str) -> str:
+    """Select only the glossary sections relevant to this sheet's labels."""
+    from underwriting_domain import UNDERWRITING_GLOSSARY
+
+    sheet_lower = sheet_name.lower()
+    label_blob = " ".join(labels).lower()
+    combined = f"{sheet_lower} {label_blob}"
+
+    section_keywords: dict[str, list[str]] = {
+        "Property Information": ["address", "bbl", "block", "lot", "zoning", "far", "buildable", "height", "borough", "overlay"],
+        "Unit Mix": ["unit", "studio", "1br", "2br", "3br", "bedroom", "ami", "affordable", "market rate", "dwelling", "duf"],
+        "Revenue": ["rent", "gpr", "egi", "vacancy", "income", "laundry", "parking", "storage", "commercial", "collection"],
+        "Operating Expenses": ["expense", "opex", "tax", "insurance", "payroll", "management", "repair", "utility", "water", "electric", "gas", "fuel", "elevator", "r&m", "reserve"],
+        "NOI & Valuation": ["noi", "cap rate", "valuation", "appraised", "price per", "grm"],
+        "Acquisition & Financing": ["purchase", "acquisition", "closing", "transfer", "hard cost", "soft cost", "tdc", "equity", "ltv", "ltc"],
+        "Debt Service": ["mortgage", "loan", "interest", "amortization", "debt service", "dscr", "construction loan", "permanent", "mezzanine"],
+        "Returns": ["cash flow", "irr", "cash-on-cash", "coc", "equity multiple", "hold period", "exit cap", "reversion", "roi", "yield", "btcf", "atcf"],
+        "Tax Programs": ["uap", "485", "421", "abatement", "icap", "j-51", "prevailing", "pilot"],
+        "Development": ["gsf", "nsf", "rsf", "efficiency", "stories", "floor", "cellar", "parking", "construction type", "lease-up", "stabilization"],
+        "Rent Regulation": ["dhcr", "rgb", "mci", "iai", "hstpa", "stabilized", "regulated", "decontrol"],
+        "Sources & Uses": ["source", "uses", "land cost", "contingency", "developer fee", "lihtc", "hpd subsidy", "hdc bond", "gap funding", "interest reserve"],
+        "Pro Forma Projections": ["year 1", "year 2", "pro forma", "rent growth", "expense growth", "npv", "discount rate", "terminal", "levered irr"],
+        "Sensitivity Analysis": ["base case", "downside", "upside", "break-even", "stress", "sensitivity"],
+        "Deal Structure": ["gp", "lp", "sponsor", "preferred return", "promote", "waterfall", "catch-up", "capital stack", "joint venture"],
+        "485-x Program": ["485-x", "benefit period", "phase-out", "affordability lock", "prevailing wage", "regulatory agreement", "hpd marketing"],
+        "UAP Scenarios": ["as-of-right", "full bonus", "avoid prevailing", "avoid 40%", "bonus floor", "optimized"],
+        "NYC Compliance & Expenses": ["scrie", "drie", "hpd violation", "lead paint", "local law", "ll97", "ll11", "ll87", "landmark", "certificate of occupancy", "dob", "sro"],
+        "Abbreviations": [],
+    }
+
+    selected_sections: list[str] = []
+    for section, keywords in section_keywords.items():
+        if section == "Abbreviations":
+            selected_sections.append(section)
+            continue
+        if any(kw in combined for kw in keywords):
+            selected_sections.append(section)
+
+    for core in ["Property Information", "Unit Mix", "Revenue", "Operating Expenses", "NOI & Valuation"]:
+        if core not in selected_sections:
+            selected_sections.append(core)
+
+    lines: list[str] = ["DOMAIN GLOSSARY (relevant sections):\n"]
+    for section in selected_sections:
+        entries = UNDERWRITING_GLOSSARY.get(section, [])
+        if not entries:
+            continue
+        lines.append(f"## {section}")
+        for label, meaning in entries:
+            lines.append(f"  - {label}: {meaning}")
+        lines.append("")
+    return "\n".join(lines)
 
 
 # ── Underwriting Template ───────────────────────────────────────────────
@@ -1015,9 +1069,11 @@ async def extract_underwriting_values():
     all_sources: dict[str, dict[str, str]] = {}
     all_confidence: dict[str, dict[str, str]] = {}
 
+    ROWS_PER_BATCH = 40
+
     for name in wb.sheetnames:
-        # Skip auto-calculated sheets
         if "(auto)" in name.lower():
+            logging.info(f"  ⏭ Skipping sheet '{name}' (auto-calculated)")
             continue
 
         ws = wb[name]
@@ -1025,11 +1081,13 @@ async def extract_underwriting_values():
         max_r = ws.max_row or 0
         max_c = ws.max_column or 0
 
-        labels: list[str] = []
-        fillable_refs: list[str] = []
+        if max_r == 0 or max_c == 0:
+            logging.info(f"  ⏭ Skipping sheet '{name}' (empty)")
+            continue
 
-        # Build a grid so we can reconstruct the 2-D layout for the LLM.
-        # grid[r][c] stores (display_value, is_formula, is_empty)
+        labels: list[str] = []
+
+        # Build a grid: grid[r][c] → (display_value, is_formula, is_empty)
         grid: dict[int, dict[int, tuple]] = {}
         for r in range(1, max_r + 1):
             grid[r] = {}
@@ -1047,35 +1105,41 @@ async def extract_underwriting_values():
                     if isinstance(val, str) and not val.replace(".", "").replace("-", "").replace(",", "").replace(" ", "").isdigit():
                         labels.append(val)
 
-        # Detect header row (row 1 if it has at least 2 text cells)
+        # Detect header row — scan rows 1-3 for the one with the most text cells
         header_row: dict[int, str] = {}
-        if 1 in grid:
+        header_row_num = 0
+        best_text_count = 0
+        for candidate_r in range(1, min(max_r + 1, 4)):
+            text_count = 0
+            candidate_headers: dict[int, str] = {}
             for c in range(1, max_c + 1):
-                val, is_f, is_e = grid[1].get(c, (None, False, True))
+                val, is_f, is_e = grid[candidate_r].get(c, (None, False, True))
                 if isinstance(val, str) and val.strip():
-                    header_row[c] = val.strip()
+                    text_count += 1
+                    candidate_headers[c] = val.strip()
+            if text_count > best_text_count:
+                best_text_count = text_count
+                header_row = candidate_headers
+                header_row_num = candidate_r
 
-        # Build a structured row-by-row description showing each cell with
-        # its column header and row label, making the spreadsheet layout
-        # clear to the LLM.  Empty and numeric cells are marked as fillable.
+        # Build row-by-row descriptions
         row_descriptions: list[str] = []
-
-        # First, emit the header row so the LLM sees the column structure.
+        header_line = ""
         if header_row:
             hdr_parts = []
             for c in range(1, max_c + 1):
                 col_letter = _col_letter(c)
                 hdr_val = header_row.get(c, "")
                 hdr_parts.append(f"{col_letter}=\"{hdr_val}\"" if hdr_val else col_letter)
-            row_descriptions.append(f"Row 1 (header): {' | '.join(hdr_parts)}")
+            header_line = f"Row {header_row_num} (header): {' | '.join(hdr_parts)}"
+            row_descriptions.append(header_line)
 
-        start_row = 2 if header_row else 1
+        start_row = (header_row_num + 1) if header_row else 1
         for r in range(start_row, max_r + 1):
             parts: list[str] = []
             row_has_content = False
-            # Determine row label — typically the first text cell in the row
             row_label = None
-            for c in range(1, min(max_c + 1, 4)):  # check first 3 cols
+            for c in range(1, min(max_c + 1, 4)):
                 val, is_f, is_e = grid[r].get(c, (None, False, True))
                 if isinstance(val, str) and val.strip():
                     row_label = val.strip()
@@ -1091,17 +1155,15 @@ async def extract_underwriting_values():
                     parts.append(f"{coord}=[formula]")
                     row_has_content = True
                 elif is_empty:
-                    # Show empty cells with their column context so the LLM
-                    # knows what value is expected here.
                     context_hint = f" ({col_header})" if col_header else ""
                     parts.append(f"{coord}=<empty>{context_hint}")
-                    fillable_refs.append(coord)
                 else:
-                    parts.append(f"{coord}={val}")
-                    row_has_content = True
-                    # Numeric cells next to a text label are also fillable
+                    # Mark existing values with [current] so LLM knows to overwrite
                     if isinstance(val, (int, float)):
-                        fillable_refs.append(coord)
+                        parts.append(f"{coord}={val} [current]")
+                    else:
+                        parts.append(f"{coord}={val}")
+                    row_has_content = True
 
             if row_has_content or any(
                 not grid[r].get(c, (None, False, True))[2]
@@ -1111,22 +1173,23 @@ async def extract_underwriting_values():
                 row_descriptions.append(f"Row {r}{label_hint}: {' | '.join(parts)}")
 
         if not row_descriptions:
+            logging.info(f"  ⏭ Skipping sheet '{name}' (no content rows)")
             continue
 
-        # Build per-section queries to avoid diluting retrieval for large sheets.
-        # Group labels into sections of ~10and run a targeted query for each,
-        # then merge and deduplicate results.
-        LABELS_PER_QUERY = 10
+        logging.info(f"  📊 Sheet '{name}': {len(row_descriptions)} rows, {len(labels)} labels")
+
+        # ── RAG retrieval ──────────────────────────────────────────────
+        LABELS_PER_QUERY = 8
         label_groups = [labels[i:i + LABELS_PER_QUERY] for i in range(0, max(len(labels), 1), LABELS_PER_QUERY)]
         all_matches: list[dict] = []
         seen_ids: set[str] = set()
 
         for group in label_groups:
-            query_text = f"UAP underwriting {name}: " + " ".join(group[:LABELS_PER_QUERY]) if group else f"UAP underwriting {name}"
+            query_text = (f"UAP underwriting {name}: " + " ".join(group)) if group else f"UAP underwriting {name}"
             query_embedding = get_embedding(query_text, client=openai_client, embedding_model=EMBEDDING_MODEL)
             results = idx.query(
                 vector=query_embedding,
-                top_k=40,
+                top_k=50,
                 namespace=NAMESPACE_KNOWLEDGE,
                 include_metadata=True,
             )
@@ -1136,100 +1199,125 @@ async def extract_underwriting_values():
                     seen_ids.add(mid)
                     all_matches.append(m)
 
-        # Sort merged results by score descending
         all_matches.sort(key=lambda m: m.get("score", 0), reverse=True)
 
-        source_chunks, source_name_lookup = _select_diversified_source_chunks(
-            all_matches,
-        )
+        source_chunks, source_name_lookup = _select_diversified_source_chunks(all_matches)
 
         if not source_chunks:
+            logging.info(f"  ⏭ Skipping sheet '{name}' (no source chunks)")
             continue
 
-        context_text = "\n---\n".join(source_chunks[:20])
-        # Limit to ~400 rows to stay within context window
-        cells_desc = "\n".join(row_descriptions[:400])
+        logging.info(f"  📄 Sheet '{name}': {len(all_matches)} RAG matches → {len(source_chunks)} chunks from {len(source_name_lookup)} docs")
 
-        prompt = (
-            f'You are filling a UAP underwriting Excel spreadsheet from source documents.\n\n'
-            f'Sheet: "{name}"\n\n'
-            f'The spreadsheet layout is shown row by row.  Each cell is shown as '
-            f'CellRef=Value.  The header row defines what each column means.  '
-            f'Row labels (in brackets) describe each row\'s purpose.  '
-            f'Cells marked <empty> have no value yet and need to be filled.  '
-            f'Cells marked [formula] are calculated automatically — do NOT fill those.\n\n'
-            f'Spreadsheet layout:\n{cells_desc}\n\n'
-            f'Source document excerpts:\n{context_text}\n\n'
-            f'Instructions:\n'
-            f'1. For each <empty> or numeric cell, check if the source documents contain '
-            f'   a clear, specific value that matches the column header and row label.\n'
-            f'2. Return ONLY a JSON object mapping cell references (like "B5") to objects '
-            f'   shaped like {{"value": 123, "source": "exact filename.pdf", "confidence": "high"}}.\n'
-            f'3. Use the exact source name shown in the [Source: ...] header of each excerpt.\n'
-            f'4. Use numbers for numeric fields.  Omit cells where the documents do not '
-            f'   provide a clear value.\n'
-            f'5. Do NOT fill cells marked [formula].\n'
-            f'6. Set "confidence" to "high" if the value is explicitly stated in the source, '
-            f'   "medium" if it requires reasonable inference (e.g. calculated from stated numbers), '
-            f'   or "low" if it is an educated guess.'
-        )
+        context_text = "\n---\n".join(source_chunks)
+        glossary_context = _pick_relevant_glossary_sections(labels, name)
 
-        try:
-            response = openai_client.chat.completions.create(
-                model=GENERATION_MODEL,
-                temperature=0.1,
-                messages=[
-                    {"role": "system", "content": "You are an expert at reading source documents (rent rolls, operating statements, appraisals, etc.) and mapping data into underwriting spreadsheet cells.  Use the column headers and row labels to determine which value belongs in which cell.  Return only valid JSON."},
-                    {"role": "user", "content": prompt},
-                ],
-                response_format={"type": "json_object"},
+        # ── Split rows into batches ────────────────────────────────────
+        data_rows = [rd for rd in row_descriptions if not rd.startswith(f"Row {header_row_num} (header)")]
+        batches = [data_rows[i:i + ROWS_PER_BATCH] for i in range(0, max(len(data_rows), 1), ROWS_PER_BATCH)]
+
+        sheet_updates: dict[str, object] = {}
+        sheet_sources: dict[str, str] = {}
+        sheet_confidence: dict[str, str] = {}
+
+        logging.info(f"  🔄 Sheet '{name}': {len(batches)} batch(es) of ≤{ROWS_PER_BATCH} rows")
+
+        for batch_idx, batch_rows in enumerate(batches):
+            batch_desc = (header_line + "\n" if header_line else "") + "\n".join(batch_rows)
+
+            prompt = (
+                f'You are filling a UAP underwriting Excel spreadsheet from source documents.\n\n'
+                f'Sheet: "{name}" (batch {batch_idx + 1}/{len(batches)})\n\n'
+                f'LAYOUT KEY:\n'
+                f'  CellRef=Value — cell with its current value\n'
+                f'  CellRef=<empty> — cell with no value, needs to be filled\n'
+                f'  CellRef=Value [current] — cell with an existing value that SHOULD BE OVERWRITTEN '
+                f'if the source documents contain data for it\n'
+                f'  CellRef=[formula] — auto-calculated, NEVER fill these\n'
+                f'  Row labels in [brackets] describe each row\'s purpose\n'
+                f'  The header row defines what each column means\n\n'
+                f'Spreadsheet layout:\n{batch_desc}\n\n'
+                f'Source document excerpts:\n{context_text}\n\n'
+                f'YOUR TASK:\n'
+                f'1. FILL EVERY POSSIBLE CELL.  Check every <empty> cell AND every [current] cell.\n'
+                f'   For [current] cells, OVERWRITE with the value from the source documents —\n'
+                f'   the source documents are the authority, not the existing spreadsheet values.\n'
+                f'2. Return a JSON object mapping cell refs (e.g. "B5") to:\n'
+                f'   {{"value": <number_or_string>, "source": "<exact filename>", "confidence": "high|medium|low"}}\n'
+                f'3. Use the exact source name from the [Source: ...] header of each excerpt.\n'
+                f'4. Numbers should be plain (no $ or commas).  Text fields should be strings.\n'
+                f'5. NEVER fill [formula] cells.\n'
+                f'6. Confidence: "high" = explicitly stated in source, "medium" = reasonable inference, '
+                f'   "low" = educated guess or industry standard assumption.\n'
+                f'7. BE AGGRESSIVE — fill as many cells as possible.  It is better to fill a cell with '
+                f'   medium/low confidence than to leave it empty.'
             )
-            result_text = response.choices[0].message.content.strip()
-            updates = json.loads(result_text)
-            if isinstance(updates, dict) and updates:
-                sheet_updates: dict[str, object] = {}
-                sheet_sources: dict[str, str] = {}
-                sheet_confidence: dict[str, str] = {}
-                for raw_ref, payload in updates.items():
-                    if not isinstance(raw_ref, str):
-                        continue
 
-                    ref = raw_ref.strip().upper()
-                    value = payload
-                    source_name = None
+            sys_msg = (
+                "You are an expert NYC real estate underwriting analyst.  You read source documents "
+                "(rent rolls, T-12 operating statements, appraisals, offering memorandums, tax bills, "
+                "surveys, environmental reports, financial projections) and populate underwriting "
+                "spreadsheet cells.  The SOURCE DOCUMENTS are the single source of truth — if a cell "
+                "already has a value marked [current], you MUST overwrite it with the value from the "
+                "source documents.  Use column headers and row labels to determine which value belongs "
+                "in which cell.  Return only valid JSON.\n\n" + glossary_context
+            )
 
-                    confidence = None
-                    if isinstance(payload, dict):
-                        value = payload.get("value")
-                        raw_source_name = payload.get("source")
-                        if isinstance(raw_source_name, str):
-                            source_name = source_name_lookup.get(raw_source_name.strip().lower())
-                        raw_confidence = payload.get("confidence")
-                        if isinstance(raw_confidence, str) and raw_confidence.lower() in ("high", "medium", "low"):
-                            confidence = raw_confidence.lower()
+            try:
+                response = openai_client.chat.completions.create(
+                    model=GENERATION_MODEL,
+                    temperature=0.15,
+                    messages=[
+                        {"role": "system", "content": sys_msg},
+                        {"role": "user", "content": prompt},
+                    ],
+                    response_format={"type": "json_object"},
+                )
+                result_text = response.choices[0].message.content.strip()
+                updates = json.loads(result_text)
+                if isinstance(updates, dict):
+                    batch_count = 0
+                    for raw_ref, payload in updates.items():
+                        if not isinstance(raw_ref, str):
+                            continue
+                        ref = raw_ref.strip().upper()
+                        value = payload
+                        source_name = None
+                        confidence = None
+                        if isinstance(payload, dict):
+                            value = payload.get("value")
+                            raw_source_name = payload.get("source")
+                            if isinstance(raw_source_name, str):
+                                source_name = source_name_lookup.get(raw_source_name.strip().lower())
+                            raw_confidence = payload.get("confidence")
+                            if isinstance(raw_confidence, str) and raw_confidence.lower() in ("high", "medium", "low"):
+                                confidence = raw_confidence.lower()
 
-                    if not isinstance(value, (str, int, float, bool)) and value is not None:
-                        continue
+                        if not isinstance(value, (str, int, float, bool)) and value is not None:
+                            continue
 
-                    sheet_updates[ref] = value
-                    sheet_confidence[ref] = confidence or "medium"
+                        sheet_updates[ref] = value
+                        sheet_confidence[ref] = confidence or "medium"
+                        if source_name:
+                            sheet_sources[ref] = source_name
+                        elif len(source_name_lookup) == 1:
+                            sheet_sources[ref] = next(iter(source_name_lookup.values()))
+                        batch_count += 1
 
-                    if source_name:
-                        sheet_sources[ref] = source_name
-                    elif len(source_name_lookup) == 1:
-                        sheet_sources[ref] = next(iter(source_name_lookup.values()))
+                    logging.info(f"    ✅ Batch {batch_idx + 1}/{len(batches)}: {batch_count} cells")
+            except Exception as e:
+                logging.warning(f"    ❌ Batch {batch_idx + 1}/{len(batches)} failed for '{name}': {e}")
 
-                if sheet_updates:
-                    all_updates[name] = sheet_updates
-                if sheet_sources:
-                    all_sources[name] = sheet_sources
-                if sheet_confidence:
-                    all_confidence[name] = sheet_confidence
-        except Exception as e:
-            logging.warning(f"RAG extraction failed for sheet '{name}': {e}")
+        if sheet_updates:
+            all_updates[name] = sheet_updates
+        if sheet_sources:
+            all_sources[name] = sheet_sources
+        if sheet_confidence:
+            all_confidence[name] = sheet_confidence
+        logging.info(f"  📊 Sheet '{name}' total: {len(sheet_updates)} cells extracted")
 
     total_cells = sum(len(v) for v in all_updates.values())
-    logging.info(f"RAG extraction complete: {total_cells} cells across {len(all_updates)} sheets")
+    logging.info(f"🏁 RAG extraction complete: {total_cells} cells across {len(all_updates)} sheets")
     return {"updates": all_updates, "sources": all_sources, "confidence": all_confidence}
 
 
