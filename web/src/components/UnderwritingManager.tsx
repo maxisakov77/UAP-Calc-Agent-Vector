@@ -19,6 +19,7 @@ type CellValue = string | number | boolean | null;
 type EditsBySheet = Record<string, Record<string, string | number>>;
 type FormulaValuesBySheet = Record<string, Record<string, CellValue>>;
 type AiSourceMap = Record<string, Record<string, string>>;
+type AiConfidenceMap = Record<string, Record<string, string>>;
 
 type ActiveCell = {
   sheetName: string;
@@ -34,6 +35,7 @@ type AutofillEntry = {
   col: number;
   ref: string;
   sourceName: string;
+  confidence: string;
   locationLabel: string;
   coordinatesLabel: string;
   displayValue: string;
@@ -247,6 +249,7 @@ export default function UnderwritingManager() {
   const [edits, setEdits] = useState<EditsBySheet>({});
   const [aiCells, setAiCells] = useState<Record<string, Set<string>>>({});
   const [aiSources, setAiSources] = useState<AiSourceMap>({});
+  const [aiConfidence, setAiConfidence] = useState<AiConfidenceMap>({});
   const [autofillQuery, setAutofillQuery] = useState("");
   const [selectedAutofillKey, setSelectedAutofillKey] = useState<string | null>(null);
   const [showAutofillPanel, setShowAutofillPanel] = useState(false);
@@ -370,6 +373,7 @@ export default function UnderwritingManager() {
       replaceEdits({});
       setAiCells({});
       setAiSources({});
+      setAiConfidence({});
       setAutofillQuery("");
       setSelectedAutofillKey(null);
       setShowAutofillPanel(false);
@@ -405,6 +409,7 @@ export default function UnderwritingManager() {
 
       const newAi: Record<string, Set<string>> = {};
       const newAiSources: AiSourceMap = {};
+      const newAiConfidence: AiConfidenceMap = {};
       const mergedEdits = updateEdits((current) => {
         const merged = { ...current };
         for (const [sheetName, cells] of Object.entries(result.updates)) {
@@ -414,11 +419,16 @@ export default function UnderwritingManager() {
           if (Object.keys(sheetSources).length > 0) {
             newAiSources[sheetName] = { ...sheetSources };
           }
+          const sheetConfidence = result.confidence?.[sheetName] || {};
+          if (Object.keys(sheetConfidence).length > 0) {
+            newAiConfidence[sheetName] = { ...sheetConfidence };
+          }
         }
         return merged;
       });
       setAiCells(newAi);
       setAiSources(newAiSources);
+      setAiConfidence(newAiConfidence);
       const updatedCount = Object.values(result.updates).reduce((sum, cells) => sum + Object.keys(cells).length, 0);
       const firstFilledSheet = Object.keys(result.updates)[0];
       const firstFilledRef = firstFilledSheet ? Object.keys(result.updates[firstFilledSheet] || {})[0] : null;
@@ -558,6 +568,7 @@ export default function UnderwritingManager() {
     const sheetEdits = edits[templateSheet.name] || {};
     const sheetFormulaValues = formulaValues[templateSheet.name] || {};
     const sheetSources = aiSources[templateSheet.name] || {};
+    const sheetConfidence = aiConfidence[templateSheet.name] || {};
 
     return Array.from(sheetAi)
       .map((ref) => {
@@ -580,6 +591,7 @@ export default function UnderwritingManager() {
           col: position.col,
           ref,
           sourceName: sheetSources[ref] || "Uploaded documents",
+          confidence: sheetConfidence[ref] || "medium",
           locationLabel: `${templateSheet.name} · ${ref}`,
           coordinatesLabel: `Row ${position.row} · Column ${colToLetter(position.col)}`,
           displayValue,
@@ -1062,21 +1074,26 @@ export default function UnderwritingManager() {
                   </div>
                 </div>
 
-                <div
-                  className={[
-                    "underwriting-autofill-summary-raw",
-                    selectedAutofillEntry.rawDiffersFromDisplay
-                      ? ""
-                      : "underwriting-autofill-summary-raw-muted",
-                  ]
-                    .filter(Boolean)
-                    .join(" ")}
-                >
-                  <span className="underwriting-autofill-summary-raw-label">
-                    Raw value
-                  </span>
-                  <span className="underwriting-autofill-summary-raw-value">
-                    {selectedAutofillEntry.rawValue}
+                <div className="underwriting-autofill-summary-meta-row">
+                  <div
+                    className={[
+                      "underwriting-autofill-summary-raw",
+                      selectedAutofillEntry.rawDiffersFromDisplay
+                        ? ""
+                        : "underwriting-autofill-summary-raw-muted",
+                    ]
+                      .filter(Boolean)
+                      .join(" ")}
+                  >
+                    <span className="underwriting-autofill-summary-raw-label">
+                      Raw value
+                    </span>
+                    <span className="underwriting-autofill-summary-raw-value">
+                      {selectedAutofillEntry.rawValue}
+                    </span>
+                  </div>
+                  <span className={`underwriting-autofill-confidence underwriting-autofill-confidence-${selectedAutofillEntry.confidence}`}>
+                    {selectedAutofillEntry.confidence}
                   </span>
                 </div>
               </div>
@@ -1127,6 +1144,9 @@ export default function UnderwritingManager() {
                           <span className="underwriting-autofill-source-name">
                             {entry.sourceName}
                           </span>
+                        </span>
+                        <span className={`underwriting-autofill-confidence underwriting-autofill-confidence-${entry.confidence}`}>
+                          {entry.confidence}
                         </span>
                         {isSelected && entry.rawDiffersFromDisplay && (
                           <span className="underwriting-autofill-item-raw-preview">

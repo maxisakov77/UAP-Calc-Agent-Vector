@@ -33,6 +33,7 @@ from underwriting_calculator import (
     calculate_underwriting_formula_values,
     enable_workbook_recalculation,
 )
+from underwriting_domain import build_domain_context_prompt
 from underwriting_template import build_underwriting_cell_payload
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
@@ -696,8 +697,44 @@ async def delete_document(filename: str):
 
 def _extract_text(content: bytes, ext: str, filename: str) -> str:
     """Extract plain text from any supported file type."""
-    # PDF
+    # PDF — prefer pdfplumber for table-aware extraction, fall back to pypdf
     if ext == ".pdf":
+        try:
+            import pdfplumber
+            pages_text: list[str] = []
+            with pdfplumber.open(io.BytesIO(content)) as pdf:
+                for page in pdf.pages:
+                    # Extract tables first so we can represent them structurally
+                    tables = page.extract_tables() or []
+                    table_texts: list[str] = []
+                    for table in tables:
+                        if not table:
+                            continue
+                        header = table[0]
+                        for row in table[1:]:
+                            if not row:
+                                continue
+                            row_parts: list[str] = []
+                            for idx, cell in enumerate(row):
+                                col_name = header[idx] if header and idx < len(header) and header[idx] else f"Col{idx+1}"
+                                cell_val = (cell or "").strip()
+                                if cell_val:
+                                    row_parts.append(f"{col_name}: {cell_val}")
+                            if row_parts:
+                                table_texts.append(" | ".join(row_parts))
+
+                    # Get non-table text
+                    page_text = page.extract_text() or ""
+                    if table_texts:
+                        page_text += "\n\n[Table data]\n" + "\n".join(table_texts)
+                    pages_text.append(page_text)
+            return "\n\n".join(pages_text)
+        except ImportError:
+            pass  # fall through to pypdf
+        except Exception as e:
+            logging.warning(f"pdfplumber failed for {filename}, falling back to pypdf: {e}")
+
+        # Fallback: pypdf
         try:
             from pypdf import PdfReader
             reader = PdfReader(io.BytesIO(content))
@@ -717,17 +754,29 @@ def _extract_text(content: bytes, ext: str, filename: str) -> str:
             logging.error(f"DOCX parse failed for {filename}: {e}")
             raise HTTPException(status_code=400, detail=f"Failed to parse DOCX: {e}")
 
-    # XLSX / XLS — extract as CSV-like text
+    # XLSX / XLS — structured extraction preserving column headers per row
     if ext in (".xlsx", ".xls"):
         try:
             import openpyxl
             wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
-            lines = []
+            lines: list[str] = []
             for sheet in wb.sheetnames:
                 ws = wb[sheet]
                 lines.append(f"=== Sheet: {sheet} ===")
-                for row in ws.iter_rows(values_only=True):
-                    lines.append("\t".join(str(c) if c is not None else "" for c in row))
+                header_cells: list[str] = []
+                for row_idx, row in enumerate(ws.iter_rows(values_only=True)):
+                    if row_idx == 0:
+                        header_cells = [str(c).strip() if c is not None else f"Col{i+1}" for i, c in enumerate(row)]
+                        lines.append("Columns: " + " | ".join(header_cells))
+                        continue
+                    parts: list[str] = []
+                    for col_idx, cell in enumerate(row):
+                        if cell is None:
+                            continue
+                        col_name = header_cells[col_idx] if col_idx < len(header_cells) else f"Col{col_idx+1}"
+                        parts.append(f"{col_name}: {cell}")
+                    if parts:
+                        lines.append(" | ".join(parts))
             return "\n".join(lines)
         except Exception as e:
             logging.error(f"Excel parse failed for {filename}: {e}")
@@ -738,13 +787,54 @@ def _extract_text(content: bytes, ext: str, filename: str) -> str:
 
 
 def _chunk_text(text: str, chunk_size: int = 800, overlap: int = 200) -> list[str]:
-    """Split text into overlapping chunks."""
-    chunks = []
-    start = 0
-    while start < len(text):
-        end = start + chunk_size
-        chunks.append(text[start:end])
-        start += chunk_size - overlap
+    """Split text into overlapping chunks, preferring paragraph boundaries."""
+    import re
+    # Split into paragraphs first (double newlines, section headers, page breaks)
+    paragraphs = re.split(r'\n{2,}|(?=^={3,}|^---)', text, flags=re.MULTILINE)
+    paragraphs = [p.strip() for p in paragraphs if p.strip()]
+
+    chunks: list[str] = []
+    current_chunk = ""
+
+    for para in paragraphs:
+        # If a single paragraph exceeds chunk_size, sub-split it the old way
+        if len(para) > chunk_size:
+            # Flush what we have
+            if current_chunk.strip():
+                chunks.append(current_chunk.strip())
+                current_chunk = ""
+            start = 0
+            while start < len(para):
+                end = start + chunk_size
+                # Try to break at a sentence or line boundary
+                if end < len(para):
+                    boundary = max(
+                        para.rfind(". ", start + chunk_size // 2, end),
+                        para.rfind("\n", start + chunk_size // 2, end),
+                    )
+                    if boundary > start:
+                        end = boundary + 1
+                chunks.append(para[start:end].strip())
+                start = end - overlap if end - overlap > start else end
+            continue
+
+        # Would adding this paragraph exceed chunk_size?
+        candidate = (current_chunk + "\n\n" + para).strip() if current_chunk else para
+        if len(candidate) <= chunk_size:
+            current_chunk = candidate
+        else:
+            if current_chunk.strip():
+                chunks.append(current_chunk.strip())
+            # Start new chunk with overlap from the end of previous chunk
+            if overlap > 0 and chunks:
+                tail = chunks[-1][-overlap:]
+                current_chunk = tail + "\n\n" + para
+            else:
+                current_chunk = para
+
+    if current_chunk.strip():
+        chunks.append(current_chunk.strip())
+
     return [c for c in chunks if c.strip()]
 
 
@@ -924,6 +1014,7 @@ async def extract_underwriting_values():
 
     all_updates: dict[str, dict] = {}
     all_sources: dict[str, dict[str, str]] = {}
+    all_confidence: dict[str, dict[str, str]] = {}
 
     for name in wb.sheetnames:
         # Skip auto-calculated sheets
@@ -1023,19 +1114,34 @@ async def extract_underwriting_values():
         if not row_descriptions:
             continue
 
-        # Query Pinecone with sheet labels as context
-        query_text = f"UAP underwriting {name}: " + " ".join(labels[:40])
-        query_embedding = get_embedding(query_text, client=openai_client, embedding_model=EMBEDDING_MODEL)
+        # Build per-section queries to avoid diluting retrieval for large sheets.
+        # Group labels into sections of ~10and run a targeted query for each,
+        # then merge and deduplicate results.
+        LABELS_PER_QUERY = 10
+        label_groups = [labels[i:i + LABELS_PER_QUERY] for i in range(0, max(len(labels), 1), LABELS_PER_QUERY)]
+        all_matches: list[dict] = []
+        seen_ids: set[str] = set()
 
-        results = idx.query(
-            vector=query_embedding,
-            top_k=80,
-            namespace=NAMESPACE_KNOWLEDGE,
-            include_metadata=True,
-        )
+        for group in label_groups:
+            query_text = f"UAP underwriting {name}: " + " ".join(group[:LABELS_PER_QUERY]) if group else f"UAP underwriting {name}"
+            query_embedding = get_embedding(query_text, client=openai_client, embedding_model=EMBEDDING_MODEL)
+            results = idx.query(
+                vector=query_embedding,
+                top_k=40,
+                namespace=NAMESPACE_KNOWLEDGE,
+                include_metadata=True,
+            )
+            for m in results.get("matches", []):
+                mid = m.get("id", "")
+                if mid not in seen_ids:
+                    seen_ids.add(mid)
+                    all_matches.append(m)
+
+        # Sort merged results by score descending
+        all_matches.sort(key=lambda m: m.get("score", 0), reverse=True)
 
         source_chunks, source_name_lookup = _select_diversified_source_chunks(
-            results.get("matches", []),
+            all_matches,
         )
 
         if not source_chunks:
@@ -1059,11 +1165,14 @@ async def extract_underwriting_values():
             f'1. For each <empty> or numeric cell, check if the source documents contain '
             f'   a clear, specific value that matches the column header and row label.\n'
             f'2. Return ONLY a JSON object mapping cell references (like "B5") to objects '
-            f'   shaped like {{"value": 123, "source": "exact filename.pdf"}}.\n'
+            f'   shaped like {{"value": 123, "source": "exact filename.pdf", "confidence": "high"}}.\n'
             f'3. Use the exact source name shown in the [Source: ...] header of each excerpt.\n'
             f'4. Use numbers for numeric fields.  Omit cells where the documents do not '
             f'   provide a clear value.\n'
-            f'5. Do NOT fill cells marked [formula].'
+            f'5. Do NOT fill cells marked [formula].\n'
+            f'6. Set "confidence" to "high" if the value is explicitly stated in the source, '
+            f'   "medium" if it requires reasonable inference (e.g. calculated from stated numbers), '
+            f'   or "low" if it is an educated guess.'
         )
 
         try:
@@ -1071,7 +1180,7 @@ async def extract_underwriting_values():
                 model=GENERATION_MODEL,
                 temperature=0.1,
                 messages=[
-                    {"role": "system", "content": "You are an expert at reading source documents (rent rolls, operating statements, appraisals, etc.) and mapping data into underwriting spreadsheet cells.  Use the column headers and row labels to determine which value belongs in which cell.  Return only valid JSON."},
+                    {"role": "system", "content": "You are an expert at reading source documents (rent rolls, operating statements, appraisals, etc.) and mapping data into underwriting spreadsheet cells.  Use the column headers and row labels to determine which value belongs in which cell.  Return only valid JSON.\n\n" + build_domain_context_prompt()},
                     {"role": "user", "content": prompt},
                 ],
                 response_format={"type": "json_object"},
@@ -1081,6 +1190,7 @@ async def extract_underwriting_values():
             if isinstance(updates, dict) and updates:
                 sheet_updates: dict[str, object] = {}
                 sheet_sources: dict[str, str] = {}
+                sheet_confidence: dict[str, str] = {}
                 for raw_ref, payload in updates.items():
                     if not isinstance(raw_ref, str):
                         continue
@@ -1089,16 +1199,21 @@ async def extract_underwriting_values():
                     value = payload
                     source_name = None
 
+                    confidence = None
                     if isinstance(payload, dict):
                         value = payload.get("value")
                         raw_source_name = payload.get("source")
                         if isinstance(raw_source_name, str):
                             source_name = source_name_lookup.get(raw_source_name.strip().lower())
+                        raw_confidence = payload.get("confidence")
+                        if isinstance(raw_confidence, str) and raw_confidence.lower() in ("high", "medium", "low"):
+                            confidence = raw_confidence.lower()
 
                     if not isinstance(value, (str, int, float, bool)) and value is not None:
                         continue
 
                     sheet_updates[ref] = value
+                    sheet_confidence[ref] = confidence or "medium"
 
                     if source_name:
                         sheet_sources[ref] = source_name
@@ -1109,12 +1224,14 @@ async def extract_underwriting_values():
                     all_updates[name] = sheet_updates
                 if sheet_sources:
                     all_sources[name] = sheet_sources
+                if sheet_confidence:
+                    all_confidence[name] = sheet_confidence
         except Exception as e:
             logging.warning(f"RAG extraction failed for sheet '{name}': {e}")
 
     total_cells = sum(len(v) for v in all_updates.values())
     logging.info(f"RAG extraction complete: {total_cells} cells across {len(all_updates)} sheets")
-    return {"updates": all_updates, "sources": all_sources}
+    return {"updates": all_updates, "sources": all_sources, "confidence": all_confidence}
 
 
 @app.post("/api/underwriting/recalculate")

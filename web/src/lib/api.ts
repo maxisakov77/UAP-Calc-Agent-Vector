@@ -449,6 +449,7 @@ export interface ParsedTemplate {
 export interface ExtractionResult {
   updates: Record<string, Record<string, string | number>>;
   sources?: Record<string, Record<string, string>>;
+  confidence?: Record<string, Record<string, string>>;
   message?: string;
 }
 

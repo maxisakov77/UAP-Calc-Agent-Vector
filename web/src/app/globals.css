@@ -788,6 +788,45 @@ body {
   font-weight: 600;
 }
 
+/* ── Confidence badges ── */
+.underwriting-autofill-confidence {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 7px;
+  border-radius: 4px;
+  line-height: 1.4;
+  flex-shrink: 0;
+}
+
+.underwriting-autofill-confidence-high {
+  background: rgba(52, 211, 153, 0.15);
+  color: #6ee7b7;
+  border: 1px solid rgba(52, 211, 153, 0.28);
+}
+
+.underwriting-autofill-confidence-medium {
+  background: rgba(251, 191, 36, 0.14);
+  color: #fcd34d;
+  border: 1px solid rgba(251, 191, 36, 0.26);
+}
+
+.underwriting-autofill-confidence-low {
+  background: rgba(248, 113, 113, 0.14);
+  color: #fca5a5;
+  border: 1px solid rgba(248, 113, 113, 0.26);
+}
+
+.underwriting-autofill-summary-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .underwriting-autofill-summary-value-block {
   display: grid;
   gap: 6px;
