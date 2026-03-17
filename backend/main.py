@@ -47,7 +47,7 @@ PINECONE_INDEX = os.getenv("PINECONE_INDEX", "und1")
 NAMESPACE_CONTEXT = os.getenv("NAMESPACE_CONTEXT", "ContextLibrary")
 NAMESPACE_KNOWLEDGE = os.getenv("NAMESPACE_KNOWLEDGE", "KnowledgeStore")
 NAMESPACE_PROPERTY = os.getenv("NAMESPACE_PROPERTY", "PropertyContextStore")
-DEFAULT_CORS_ALLOW_ORIGINS = ("http://localhost:3000", "http://localhost:3001")
+DEFAULT_CORS_ALLOW_ORIGINS = ("http://localhost:3000", "http://localhost:3001", "http://127.0.0.1:35095", "http://localhost:35095")
 
 
 def _get_csv_env(name: str, default: tuple[str, ...]) -> list[str]:
@@ -748,6 +748,65 @@ def _chunk_text(text: str, chunk_size: int = 800, overlap: int = 200) -> list[st
     return [c for c in chunks if c.strip()]
 
 
+def _select_diversified_source_chunks(
+    matches: list[dict],
+    *,
+    max_sources: int = 8,
+    max_chunks_per_source: int = 3,
+    max_total_chunks: int = 20,
+) -> tuple[list[str], dict[str, str]]:
+    """Balance retrieved chunks across documents so one file does not dominate extraction."""
+    chunks_by_source: dict[str, list[tuple[int | None, str]]] = {}
+    source_order: list[str] = []
+
+    for match in matches:
+        metadata = match.get("metadata", {}) or {}
+        chunk_text = metadata.get("text", "")
+        source_name = str(metadata.get("source", "Unknown source")).strip() or "Unknown source"
+        if not chunk_text:
+            continue
+
+        if source_name not in chunks_by_source:
+            chunks_by_source[source_name] = []
+            source_order.append(source_name)
+
+        if len(chunks_by_source[source_name]) >= max_chunks_per_source:
+            continue
+
+        raw_chunk_index = metadata.get("chunk_index")
+        chunk_index = raw_chunk_index if isinstance(raw_chunk_index, int) else None
+        chunks_by_source[source_name].append((chunk_index, chunk_text))
+
+    selected_sources = source_order[:max_sources]
+    source_chunks: list[str] = []
+    source_name_lookup: dict[str, str] = {}
+
+    round_index = 0
+    while len(source_chunks) < max_total_chunks:
+        added_any = False
+        for source_name in selected_sources:
+            chunks = chunks_by_source.get(source_name, [])
+            if round_index >= len(chunks):
+                continue
+
+            chunk_index, chunk_text = chunks[round_index]
+            header = f"[Source: {source_name}]"
+            if chunk_index is not None:
+                header += f"\n[Chunk {chunk_index}]"
+            source_chunks.append(f"{header}\n{chunk_text}")
+            source_name_lookup[source_name.lower()] = source_name
+            added_any = True
+
+            if len(source_chunks) >= max_total_chunks:
+                break
+
+        if not added_any:
+            break
+        round_index += 1
+
+    return source_chunks, source_name_lookup
+
+
 # ── Underwriting Template ───────────────────────────────────────────────
 
 def _safe_cell_value(val):
@@ -877,23 +936,91 @@ async def extract_underwriting_values():
         max_c = ws.max_column or 0
 
         labels: list[str] = []
-        cell_descriptions: list[str] = []
+        fillable_refs: list[str] = []
 
+        # Build a grid so we can reconstruct the 2-D layout for the LLM.
+        # grid[r][c] stores (display_value, is_formula, is_empty)
+        grid: dict[int, dict[int, tuple]] = {}
         for r in range(1, max_r + 1):
+            grid[r] = {}
             for c in range(1, max_c + 1):
                 val = ws.cell(r, c).value
                 fml = ws_f_s.cell(r, c).value
-                if isinstance(fml, str) and fml.startswith("="):
-                    continue
-                if val is None:
-                    continue
-                coord = f"{_col_letter(c)}{r}"
-                safe = _safe_cell_value(val)
-                cell_descriptions.append(f"{coord}={safe}")
-                if isinstance(val, str) and not val.replace(".", "").replace("-", "").replace(",", "").replace(" ", "").isdigit():
-                    labels.append(val)
+                is_formula = isinstance(fml, str) and fml.startswith("=")
+                if is_formula:
+                    grid[r][c] = (None, True, False)
+                elif val is None:
+                    grid[r][c] = (None, False, True)
+                else:
+                    safe = _safe_cell_value(val)
+                    grid[r][c] = (safe, False, False)
+                    if isinstance(val, str) and not val.replace(".", "").replace("-", "").replace(",", "").replace(" ", "").isdigit():
+                        labels.append(val)
 
-        if not cell_descriptions:
+        # Detect header row (row 1 if it has at least 2 text cells)
+        header_row: dict[int, str] = {}
+        if 1 in grid:
+            for c in range(1, max_c + 1):
+                val, is_f, is_e = grid[1].get(c, (None, False, True))
+                if isinstance(val, str) and val.strip():
+                    header_row[c] = val.strip()
+
+        # Build a structured row-by-row description showing each cell with
+        # its column header and row label, making the spreadsheet layout
+        # clear to the LLM.  Empty and numeric cells are marked as fillable.
+        row_descriptions: list[str] = []
+
+        # First, emit the header row so the LLM sees the column structure.
+        if header_row:
+            hdr_parts = []
+            for c in range(1, max_c + 1):
+                col_letter = _col_letter(c)
+                hdr_val = header_row.get(c, "")
+                hdr_parts.append(f"{col_letter}=\"{hdr_val}\"" if hdr_val else col_letter)
+            row_descriptions.append(f"Row 1 (header): {' | '.join(hdr_parts)}")
+
+        start_row = 2 if header_row else 1
+        for r in range(start_row, max_r + 1):
+            parts: list[str] = []
+            row_has_content = False
+            # Determine row label — typically the first text cell in the row
+            row_label = None
+            for c in range(1, min(max_c + 1, 4)):  # check first 3 cols
+                val, is_f, is_e = grid[r].get(c, (None, False, True))
+                if isinstance(val, str) and val.strip():
+                    row_label = val.strip()
+                    break
+
+            for c in range(1, max_c + 1):
+                val, is_formula, is_empty = grid[r].get(c, (None, False, True))
+                col_letter = _col_letter(c)
+                coord = f"{col_letter}{r}"
+                col_header = header_row.get(c, "")
+
+                if is_formula:
+                    parts.append(f"{coord}=[formula]")
+                    row_has_content = True
+                elif is_empty:
+                    # Show empty cells with their column context so the LLM
+                    # knows what value is expected here.
+                    context_hint = f" ({col_header})" if col_header else ""
+                    parts.append(f"{coord}=<empty>{context_hint}")
+                    fillable_refs.append(coord)
+                else:
+                    parts.append(f"{coord}={val}")
+                    row_has_content = True
+                    # Numeric cells next to a text label are also fillable
+                    if isinstance(val, (int, float)):
+                        fillable_refs.append(coord)
+
+            if row_has_content or any(
+                not grid[r].get(c, (None, False, True))[2]
+                for c in range(1, max_c + 1)
+            ):
+                label_hint = f" [{row_label}]" if row_label else ""
+                row_descriptions.append(f"Row {r}{label_hint}: {' | '.join(parts)}")
+
+        if not row_descriptions:
             continue
 
         # Query Pinecone with sheet labels as context
@@ -902,39 +1029,41 @@ async def extract_underwriting_values():
 
         results = idx.query(
             vector=query_embedding,
-            top_k=30,
+            top_k=80,
             namespace=NAMESPACE_KNOWLEDGE,
             include_metadata=True,
         )
 
-        source_chunks: list[str] = []
-        source_name_lookup: dict[str, str] = {}
-        for match in results.get("matches", []):
-            metadata = match.get("metadata", {}) or {}
-            chunk_text = metadata.get("text", "")
-            source_name = str(metadata.get("source", "Unknown source")).strip() or "Unknown source"
-            if not chunk_text:
-                continue
-            source_chunks.append(f"[Source: {source_name}]\n{chunk_text}")
-            source_name_lookup[source_name.lower()] = source_name
+        source_chunks, source_name_lookup = _select_diversified_source_chunks(
+            results.get("matches", []),
+        )
 
         if not source_chunks:
             continue
 
         context_text = "\n---\n".join(source_chunks[:20])
-        cells_desc = "\n".join(cell_descriptions[:300])
+        # Limit to ~400 rows to stay within context window
+        cells_desc = "\n".join(row_descriptions[:400])
 
         prompt = (
             f'You are filling a UAP underwriting Excel spreadsheet from source documents.\n\n'
-            f'Sheet: "{name}"\n'
-            f'Current cell values (CellRef=CurrentValue):\n{cells_desc}\n\n'
+            f'Sheet: "{name}"\n\n'
+            f'The spreadsheet layout is shown row by row.  Each cell is shown as '
+            f'CellRef=Value.  The header row defines what each column means.  '
+            f'Row labels (in brackets) describe each row\'s purpose.  '
+            f'Cells marked <empty> have no value yet and need to be filled.  '
+            f'Cells marked [formula] are calculated automatically — do NOT fill those.\n\n'
+            f'Spreadsheet layout:\n{cells_desc}\n\n'
             f'Source document excerpts:\n{context_text}\n\n'
-            f'Extract updated values from the source documents above. '
-            f'Return ONLY a JSON object mapping cell references (like "B5") to objects shaped like '
-            f'{{"value": 123, "source": "exact filename.pdf"}}. '
-            f'Use the exact source name shown in the excerpt header. '
-            f'Only include cells where the documents provide a clear, specific value. '
-            f'Use numbers for numeric fields. Omit cells with no clear value in the documents.'
+            f'Instructions:\n'
+            f'1. For each <empty> or numeric cell, check if the source documents contain '
+            f'   a clear, specific value that matches the column header and row label.\n'
+            f'2. Return ONLY a JSON object mapping cell references (like "B5") to objects '
+            f'   shaped like {{"value": 123, "source": "exact filename.pdf"}}.\n'
+            f'3. Use the exact source name shown in the [Source: ...] header of each excerpt.\n'
+            f'4. Use numbers for numeric fields.  Omit cells where the documents do not '
+            f'   provide a clear value.\n'
+            f'5. Do NOT fill cells marked [formula].'
         )
 
         try:
@@ -942,7 +1071,7 @@ async def extract_underwriting_values():
                 model=GENERATION_MODEL,
                 temperature=0.1,
                 messages=[
-                    {"role": "system", "content": "You extract structured data from documents into spreadsheet cells. Return only valid JSON."},
+                    {"role": "system", "content": "You are an expert at reading source documents (rent rolls, operating statements, appraisals, etc.) and mapping data into underwriting spreadsheet cells.  Use the column headers and row labels to determine which value belongs in which cell.  Return only valid JSON."},
                     {"role": "user", "content": prompt},
                 ],
                 response_format={"type": "json_object"},

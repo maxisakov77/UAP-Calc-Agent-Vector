@@ -34,8 +34,11 @@ type AutofillEntry = {
   col: number;
   ref: string;
   sourceName: string;
+  locationLabel: string;
+  coordinatesLabel: string;
   displayValue: string;
   rawValue: string;
+  rawDiffersFromDisplay: boolean;
 };
 
 const ROW_HEADER_WIDTH = 56;
@@ -246,6 +249,7 @@ export default function UnderwritingManager() {
   const [aiSources, setAiSources] = useState<AiSourceMap>({});
   const [autofillQuery, setAutofillQuery] = useState("");
   const [selectedAutofillKey, setSelectedAutofillKey] = useState<string | null>(null);
+  const [showAutofillPanel, setShowAutofillPanel] = useState(false);
   const [documents, setDocuments] = useState<DocumentInfo[]>([]);
   const [formulaValues, setFormulaValues] = useState<FormulaValuesBySheet>({});
   const [formulaWarnings, setFormulaWarnings] = useState<UnderwritingRecalculationWarning[]>([]);
@@ -368,6 +372,7 @@ export default function UnderwritingManager() {
       setAiSources({});
       setAutofillQuery("");
       setSelectedAutofillKey(null);
+      setShowAutofillPanel(false);
       setFormulaValues({});
       setFormulaWarnings([]);
       setActiveTab(0);
@@ -418,6 +423,7 @@ export default function UnderwritingManager() {
       const firstFilledSheet = Object.keys(result.updates)[0];
       const firstFilledRef = firstFilledSheet ? Object.keys(result.updates[firstFilledSheet] || {})[0] : null;
       setAutofillQuery("");
+      setShowAutofillPanel(false);
       if (firstFilledSheet && firstFilledRef && template) {
         const nextTabIndex = template.sheets.findIndex((candidate) => candidate.name === firstFilledSheet);
         if (nextTabIndex >= 0) {
@@ -428,7 +434,7 @@ export default function UnderwritingManager() {
         setSelectedAutofillKey(null);
       }
       setStatusMessage(
-        `Auto-filled ${updatedCount} cell${updatedCount === 1 ? "" : "s"} from uploaded documents. Browse the Autofill Matches panel for locations.`,
+        `Auto-filled ${updatedCount} cell${updatedCount === 1 ? "" : "s"} from uploaded documents. Use Show Matches to review locations.`,
       );
       void runRecalculation(mergedEdits);
     } catch (err) {
@@ -562,6 +568,11 @@ export default function UnderwritingManager() {
 
         const cell = templateSheet.data[position.row - 1]?.[position.col - 1] ?? null;
         const resolvedValue = getResolvedCellValue(cell, sheetEdits, sheetFormulaValues);
+        const displayValue =
+          formatWorkbookDisplayValue(cell, resolvedValue) ||
+          toInputValue(resolvedValue) ||
+          "(blank)";
+        const rawValue = toInputValue(resolvedValue) || "(blank)";
         return {
           key: getAutofillKey(templateSheet.name, ref),
           sheetName: templateSheet.name,
@@ -569,8 +580,11 @@ export default function UnderwritingManager() {
           col: position.col,
           ref,
           sourceName: sheetSources[ref] || "Uploaded documents",
-          displayValue: formatWorkbookDisplayValue(cell, resolvedValue) || toInputValue(resolvedValue) || "(blank)",
-          rawValue: toInputValue(resolvedValue) || "(blank)",
+          locationLabel: `${templateSheet.name} · ${ref}`,
+          coordinatesLabel: `Row ${position.row} · Column ${colToLetter(position.col)}`,
+          displayValue,
+          rawValue,
+          rawDiffersFromDisplay: rawValue !== displayValue,
         } satisfies AutofillEntry;
       })
       .filter((entry): entry is AutofillEntry => entry !== null)
@@ -599,6 +613,7 @@ export default function UnderwritingManager() {
   const selectedAutofillIndex = selectedAutofillKey
     ? navigationEntries.findIndex((entry) => entry.key === selectedAutofillKey)
     : -1;
+  const selectedAutofillSourceThemeClass = getSourceThemeClass(selectedAutofillEntry?.sourceName);
 
   function focusAutofillEntry(entry: AutofillEntry) {
     clearActiveCell();
@@ -742,6 +757,19 @@ export default function UnderwritingManager() {
           >
             {extracting ? "Extracting…" : "⚡ Auto-Fill from Docs"}
           </button>
+          {autofillEntries.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowAutofillPanel((current) => !current)}
+              className={`underwriting-button ${showAutofillPanel ? "underwriting-button-accent" : "underwriting-button-secondary"}`}
+              aria-expanded={showAutofillPanel}
+              aria-controls="underwriting-autofill-panel"
+            >
+              {showAutofillPanel
+                ? "Hide Matches"
+                : `Show Matches (${autofillEntries.length})`}
+            </button>
+          )}
           <button
             onClick={handleDownload}
             className="underwriting-button underwriting-button-success"
@@ -949,12 +977,16 @@ export default function UnderwritingManager() {
           </table>
         </div>
 
-        {autofillEntries.length > 0 && (
-          <aside className="underwriting-autofill-panel" aria-label="Autofill matches">
+        {showAutofillPanel && autofillEntries.length > 0 && (
+          <aside
+            id="underwriting-autofill-panel"
+            className="underwriting-autofill-panel"
+            aria-label="Autofill matches"
+          >
             <div className="underwriting-autofill-panel-header">
               <div className="underwriting-autofill-panel-heading-row">
-                <div>
-                  <div className="underwriting-autofill-panel-title">Autofill Matches</div>
+                <div className="underwriting-autofill-panel-heading">
+                  <div className="underwriting-autofill-panel-title">Autofill matches</div>
                   <div className="underwriting-autofill-panel-subtitle">
                     {filteredAutofillEntries.length} of {autofillEntries.length} locations
                   </div>
@@ -994,6 +1026,62 @@ export default function UnderwritingManager() {
               />
             </div>
 
+            {selectedAutofillEntry && (
+              <div className="underwriting-autofill-summary">
+                <div className="underwriting-autofill-summary-header">
+                  <div className="underwriting-autofill-summary-copy">
+                    <div className="underwriting-autofill-summary-location">
+                      {selectedAutofillEntry.locationLabel}
+                    </div>
+                    <div className="underwriting-autofill-summary-coordinates">
+                      {selectedAutofillEntry.coordinatesLabel}
+                    </div>
+                  </div>
+                  <span
+                    className={[
+                      "underwriting-autofill-source-badge",
+                      "underwriting-autofill-source-badge-strong",
+                      selectedAutofillSourceThemeClass,
+                    ]
+                      .filter(Boolean)
+                      .join(" ")}
+                  >
+                    <span className="underwriting-autofill-source-dot" />
+                    <span className="underwriting-autofill-source-name">
+                      {selectedAutofillEntry.sourceName}
+                    </span>
+                  </span>
+                </div>
+
+                <div className="underwriting-autofill-summary-value-block">
+                  <div className="underwriting-autofill-summary-value-label">
+                    Displayed value
+                  </div>
+                  <div className="underwriting-autofill-summary-value">
+                    {selectedAutofillEntry.displayValue}
+                  </div>
+                </div>
+
+                <div
+                  className={[
+                    "underwriting-autofill-summary-raw",
+                    selectedAutofillEntry.rawDiffersFromDisplay
+                      ? ""
+                      : "underwriting-autofill-summary-raw-muted",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                >
+                  <span className="underwriting-autofill-summary-raw-label">
+                    Raw value
+                  </span>
+                  <span className="underwriting-autofill-summary-raw-value">
+                    {selectedAutofillEntry.rawValue}
+                  </span>
+                </div>
+              </div>
+            )}
+
             <div className="underwriting-autofill-list">
               {filteredAutofillEntries.length > 0 ? (
                 filteredAutofillEntries.map((entry) => {
@@ -1012,25 +1100,39 @@ export default function UnderwritingManager() {
                       onClick={() => focusAutofillEntry(entry)}
                       title={`${entry.sheetName} ${entry.ref}\n${entry.sourceName}`}
                     >
-                      <div className="underwriting-autofill-item-topline">
-                        <span className="underwriting-autofill-item-ref">{entry.sheetName} · {entry.ref}</span>
-                        <span className="underwriting-autofill-item-coordinates">Row {entry.row} · Column {colToLetter(entry.col)}</span>
-                      </div>
-                      <div className="underwriting-autofill-item-source-row">
-                        <span className={`underwriting-document-pill ${sourceThemeClass}`}>
-                          <span className="underwriting-document-dot" />
-                          <span className="underwriting-document-name">{entry.sourceName}</span>
+                      <div className="underwriting-autofill-item-main">
+                        <div className="underwriting-autofill-item-copy">
+                          <span className="underwriting-autofill-item-ref">
+                            {entry.locationLabel}
+                          </span>
+                          <span className="underwriting-autofill-item-coordinates">
+                            {entry.coordinatesLabel}
+                          </span>
+                        </div>
+                        <span className="underwriting-autofill-item-value">
+                          {entry.displayValue}
                         </span>
                       </div>
-                      <div className="underwriting-autofill-item-details">
-                        <div className="underwriting-autofill-item-detail">
-                          <span className="underwriting-autofill-item-detail-label">Displayed</span>
-                          <span className="underwriting-autofill-item-value">{entry.displayValue}</span>
-                        </div>
-                        <div className="underwriting-autofill-item-detail">
-                          <span className="underwriting-autofill-item-detail-label">Raw value</span>
-                          <span className="underwriting-autofill-item-raw">{entry.rawValue}</span>
-                        </div>
+                      <div className="underwriting-autofill-item-meta">
+                        <span
+                          className={[
+                            "underwriting-autofill-source-badge",
+                            "underwriting-autofill-source-badge-subtle",
+                            sourceThemeClass,
+                          ]
+                            .filter(Boolean)
+                            .join(" ")}
+                        >
+                          <span className="underwriting-autofill-source-dot" />
+                          <span className="underwriting-autofill-source-name">
+                            {entry.sourceName}
+                          </span>
+                        </span>
+                        {isSelected && entry.rawDiffersFromDisplay && (
+                          <span className="underwriting-autofill-item-raw-preview">
+                            Raw: {entry.rawValue}
+                          </span>
+                        )}
                       </div>
                     </button>
                   );
