@@ -33,7 +33,6 @@ from underwriting_calculator import (
     calculate_underwriting_formula_values,
     enable_workbook_recalculation,
 )
-from underwriting_domain import build_domain_context_prompt
 from underwriting_template import build_underwriting_cell_payload
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
@@ -1180,7 +1179,7 @@ async def extract_underwriting_values():
                 model=GENERATION_MODEL,
                 temperature=0.1,
                 messages=[
-                    {"role": "system", "content": "You are an expert at reading source documents (rent rolls, operating statements, appraisals, etc.) and mapping data into underwriting spreadsheet cells.  Use the column headers and row labels to determine which value belongs in which cell.  Return only valid JSON.\n\n" + build_domain_context_prompt()},
+                    {"role": "system", "content": "You are an expert at reading source documents (rent rolls, operating statements, appraisals, etc.) and mapping data into underwriting spreadsheet cells.  Use the column headers and row labels to determine which value belongs in which cell.  Return only valid JSON."},
                     {"role": "user", "content": prompt},
                 ],
                 response_format={"type": "json_object"},

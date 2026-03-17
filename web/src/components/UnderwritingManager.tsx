@@ -373,7 +373,6 @@ export default function UnderwritingManager() {
       replaceEdits({});
       setAiCells({});
       setAiSources({});
-      setAiConfidence({});
       setAutofillQuery("");
       setSelectedAutofillKey(null);
       setShowAutofillPanel(false);
