@@ -118,43 +118,19 @@ function Stop-ProcessIfRunning {
     }
 }
 
-function Copy-FrontendWorkspace {
-    param(
-        [string]$SourceDirectory,
-        [string]$DestinationDirectory
-    )
-
-    if (Test-Path $DestinationDirectory) {
-        Remove-Item -Path $DestinationDirectory -Recurse -Force
-    }
-
-    New-Item -ItemType Directory -Path $DestinationDirectory -Force | Out-Null
-
-    $null = robocopy $SourceDirectory $DestinationDirectory /E /XD node_modules .next
-    if ($LASTEXITCODE -gt 7) {
-        throw "Failed to stage frontend workspace with robocopy (exit code $LASTEXITCODE)"
-    }
-
-    New-Item `
-        -ItemType Junction `
-        -Path (Join-Path $DestinationDirectory "node_modules") `
-        -Target (Join-Path $SourceDirectory "node_modules") | Out-Null
-}
-
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Split-Path -Parent $scriptDir
 $backendDir = Join-Path $repoRoot "backend"
 $webDir = Join-Path $repoRoot "web"
 $backendPython = Join-Path $backendDir "venv\Scripts\python.exe"
-$nextBin = Join-Path $webDir "node_modules\next\dist\bin\next"
-$nodePath = (Get-Command node -ErrorAction Stop).Source
+$nextCli = Join-Path $webDir "node_modules\.bin\next.cmd"
 
 if (-not (Test-Path $backendPython)) {
     throw "Backend virtualenv Python not found at $backendPython"
 }
 
-if (-not (Test-Path $nextBin)) {
-    throw "Next.js CLI not found at $nextBin"
+if (-not (Test-Path $nextCli)) {
+    throw "Next.js CLI not found at $nextCli"
 }
 
 $excludedPorts = @(3000, 3001, 8000)
@@ -174,8 +150,6 @@ $logDir = Join-Path $env:TEMP "UAP-Calc-Agent-Vector"
 New-Item -ItemType Directory -Path $logDir -Force | Out-Null
 
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
-$sessionWorkDir = Join-Path $logDir "session-$stamp"
-$frontendWorkDir = Join-Path $sessionWorkDir "web"
 $backendOutLog = Join-Path $logDir "backend-$stamp.out.log"
 $backendErrLog = Join-Path $logDir "backend-$stamp.err.log"
 $frontendOutLog = Join-Path $logDir "frontend-$stamp.out.log"
@@ -186,9 +160,6 @@ $backendProcess = $null
 $frontendProcess = $null
 
 try {
-    Copy-FrontendWorkspace -SourceDirectory $webDir -DestinationDirectory $frontendWorkDir
-    $stagedNextBin = Join-Path $frontendWorkDir "node_modules\next\dist\bin\next"
-
     $backendProcess = Start-ProcessWithEnvironment `
         -FilePath $backendPython `
         -ArgumentList @("-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", $backendPort.ToString()) `
@@ -204,17 +175,15 @@ try {
     Wait-ForHttpReady -Url $settingsUrl -TimeoutSeconds 90 | Out-Null
 
     $frontendProcess = Start-ProcessWithEnvironment `
-        -FilePath $nodePath `
+        -FilePath $nextCli `
         -ArgumentList @(
-            $stagedNextBin,
             "dev",
-            "--webpack",
-            "--hostname",
+            "-H",
             "127.0.0.1",
-            "--port",
+            "-p",
             $frontendPort.ToString()
         ) `
-        -WorkingDirectory $frontendWorkDir `
+        -WorkingDirectory $webDir `
         -Environment @{
             NEXT_PUBLIC_API_URL = $backendUrl
         } `
@@ -236,7 +205,7 @@ try {
             url = $frontendUrl
             port = $frontendPort
             pid = $frontendProcess.Id
-            work_dir = $frontendWorkDir
+            work_dir = $webDir
             stdout_log = $frontendOutLog
             stderr_log = $frontendErrLog
         }
