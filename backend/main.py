@@ -1213,9 +1213,14 @@ async def extract_underwriting_values():
         all_matches: list[dict] = []
         seen_ids: set[str] = set()
 
-        for group in label_groups:
-            query_text = (f"UAP underwriting {name}: " + " ".join(group)) if group else f"UAP underwriting {name}"
-            query_embedding = get_embedding(query_text, client=openai_client, embedding_model=EMBEDDING_MODEL)
+        # Batch-embed all label-group queries in one API call
+        query_texts = [
+            (f"UAP underwriting {name}: " + " ".join(group)) if group else f"UAP underwriting {name}"
+            for group in label_groups
+        ]
+        query_embeddings = get_embeddings_batch(query_texts, client=openai_client, embedding_model=EMBEDDING_MODEL)
+
+        for query_embedding in query_embeddings:
             results = idx.query(
                 vector=query_embedding,
                 top_k=50,
