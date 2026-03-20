@@ -1100,11 +1100,6 @@ async def extract_underwriting_values():
     ROWS_PER_BATCH = 40
 
     for name in wb.sheetnames:
-        name_lower = name.lower()
-        if "(auto)" in name_lower or name_lower.endswith("auto") or " auto" in name_lower:
-            logging.info(f"  ⏭ Skipping sheet '{name}' (auto-calculated)")
-            continue
-
         ws = wb[name]
         ws_f_s = wb_f[name]
         max_r = ws.max_row or 0
@@ -1118,6 +1113,7 @@ async def extract_underwriting_values():
 
         # Build a grid: grid[r][c] → (display_value, is_formula, is_empty)
         grid: dict[int, dict[int, tuple]] = {}
+        has_editable_empty = False
         for r in range(1, max_r + 1):
             grid[r] = {}
             for c in range(1, max_c + 1):
@@ -1128,11 +1124,16 @@ async def extract_underwriting_values():
                     grid[r][c] = (None, True, False)
                 elif val is None:
                     grid[r][c] = (None, False, True)
+                    has_editable_empty = True
                 else:
                     safe = _safe_cell_value(val)
                     grid[r][c] = (safe, False, False)
                     if isinstance(val, str) and not val.replace(".", "").replace("-", "").replace(",", "").replace(" ", "").isdigit():
                         labels.append(val)
+
+        if not has_editable_empty:
+            logging.info(f"  ⏭ Skipping sheet '{name}' (no empty editable cells)")
+            continue
 
         # Detect header row — scan rows 1-3 for the one with the most text cells
         header_row: dict[int, str] = {}
