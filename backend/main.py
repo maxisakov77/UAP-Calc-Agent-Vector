@@ -18,7 +18,7 @@ from pinecone import Pinecone, ServerlessSpec
 from pydantic import BaseModel
 
 from engine.engine import context_engine
-from engine.helpers import helper_sanitize_input, helper_moderate_content, get_embedding
+from engine.helpers import helper_sanitize_input, helper_moderate_content, get_embedding, get_embeddings_batch
 from property_models import (
     BlockLotsResponse,
     PropertyContext,
@@ -664,9 +664,9 @@ async def upload_document(file: UploadFile = File(...)):
 
     # Upsert into Pinecone
     idx = pinecone_client.Index(active_index_name)
+    embeddings = get_embeddings_batch(chunks, client=openai_client, embedding_model=EMBEDDING_MODEL)
     vectors = []
-    for i, chunk in enumerate(chunks):
-        embedding = get_embedding(chunk, client=openai_client, embedding_model=EMBEDDING_MODEL)
+    for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
         vec_id = f"{file.filename}__chunk_{i}"
         vectors.append({
             "id": vec_id,

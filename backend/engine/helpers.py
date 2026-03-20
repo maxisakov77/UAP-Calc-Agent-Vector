@@ -49,6 +49,16 @@ def get_embedding(text, client, embedding_model):
     return response.data[0].embedding
 
 
+def get_embeddings_batch(texts, client, embedding_model, batch_size=128):
+    """Embed a list of texts in batches, returning a list of embedding vectors."""
+    all_embeddings: list[list[float]] = []
+    for i in range(0, len(texts), batch_size):
+        batch = texts[i : i + batch_size]
+        response = client.embeddings.create(input=batch, model=embedding_model)
+        all_embeddings.extend(d.embedding for d in response.data)
+    return all_embeddings
+
+
 # === Pinecone Query ===
 
 def query_pinecone(query_text, index, client, embedding_model, namespace, top_k=10):
