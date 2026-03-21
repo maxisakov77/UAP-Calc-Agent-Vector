@@ -216,6 +216,67 @@ export interface AcrisSummary {
   open_liens: number;
 }
 
+export interface HpdViolationSummary {
+  open_class_a: number;
+  open_class_b: number;
+  open_class_c: number;
+  total_open: number;
+  rent_impairing: number;
+  most_recent_date?: string | null;
+}
+
+export interface DobJobRecord {
+  job_number: string;
+  job_type: string;
+  job_status: string;
+  initial_cost?: number | null;
+  proposed_dwelling_units?: number | null;
+  existing_dwelling_units?: number | null;
+  proposed_zoning_sqft?: number | null;
+}
+
+export interface DobJobSummary {
+  active_jobs: DobJobRecord[];
+  has_active_new_building: boolean;
+  has_active_alteration: boolean;
+  total_active: number;
+}
+
+export interface EcbViolationSummary {
+  open_violations: number;
+  total_penalties: number;
+  total_balance_due: number;
+  most_recent_date?: string | null;
+}
+
+export interface DofSaleRecord {
+  sale_price?: number | null;
+  sale_date?: string | null;
+  building_class: string;
+  residential_units: number;
+  commercial_units: number;
+  total_units: number;
+  gross_square_feet?: number | null;
+}
+
+export interface ComparableSalesSummary {
+  subject_sale?: DofSaleRecord | null;
+  comparable_sales: DofSaleRecord[];
+  total_found: number;
+}
+
+export interface HpdLitigationSummary {
+  open_cases: number;
+  case_types: string[];
+  most_recent_date?: string | null;
+}
+
+export interface FdnyVacateSummary {
+  total_vacate_orders: number;
+  active_vacate_orders: number;
+  vacated_units: number;
+}
+
 export interface PropertyLotRecord {
   bbl: string;
   borough: string;
@@ -236,6 +297,12 @@ export interface PropertyLotRecord {
   has_pluto: boolean;
   has_dof: boolean;
   has_acris: boolean;
+  has_hpd: boolean;
+  has_dob: boolean;
+  has_ecb: boolean;
+  has_sales: boolean;
+  has_litigation: boolean;
+  has_fdny: boolean;
   lot_type_code?: number | null;
   lot_type: string;
 }
@@ -270,6 +337,12 @@ export interface PropertyContext {
   scenarios: PropertyScenario[];
   lots_detail: PropertyLotRecord[];
   acris_summary?: AcrisSummary | null;
+  hpd_violations?: HpdViolationSummary | null;
+  dob_jobs?: DobJobSummary | null;
+  ecb_violations?: EcbViolationSummary | null;
+  comparable_sales?: ComparableSalesSummary | null;
+  hpd_litigations?: HpdLitigationSummary | null;
+  fdny_vacates?: FdnyVacateSummary | null;
   sources: Record<string, unknown>;
   property_brief: string;
 }

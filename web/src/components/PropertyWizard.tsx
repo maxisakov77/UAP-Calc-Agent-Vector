@@ -374,6 +374,10 @@ export default function PropertyWizard({
             <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#a78bfa", display: "inline-block" }} /> Zoning Ref</span>
             <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#3b82f6", display: "inline-block" }} /> Calculated</span>
             <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#ef4444", display: "inline-block" }} /> ACRIS</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#f97316", display: "inline-block" }} /> HPD</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#8b5cf6", display: "inline-block" }} /> DOB</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#ec4899", display: "inline-block" }} /> ECB</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#06b6d4", display: "inline-block" }} /> Sales</span>
             <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#22c55e", display: "inline-block" }} /> Documents</span>
           </div>
 
@@ -564,6 +568,121 @@ export default function PropertyWizard({
               </div>
             </div>
           )}
+
+          {activeContext.hpd_violations && activeContext.hpd_violations.total_open > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 600, color: "#f97316", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                HPD Violations
+                <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#f97316", display: "inline-block" }} title="HPD" />
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, fontSize: 11 }}>
+                <Metric label="Class A" value={String(activeContext.hpd_violations.open_class_a)} source="hpd" />
+                <Metric label="Class B" value={String(activeContext.hpd_violations.open_class_b)} source="hpd" />
+                <Metric label="Class C" value={String(activeContext.hpd_violations.open_class_c)} source="hpd" />
+              </div>
+              {activeContext.hpd_violations.rent_impairing > 0 && (
+                <Metric label="Rent Impairing" value={String(activeContext.hpd_violations.rent_impairing)} source="hpd" />
+              )}
+              <div style={{ fontSize: 10, color: "var(--brand-granite-gray)" }}>
+                {activeContext.hpd_violations.total_open} open violation{activeContext.hpd_violations.total_open !== 1 ? "s" : ""}
+                {activeContext.hpd_violations.most_recent_date ? ` · Last inspected ${activeContext.hpd_violations.most_recent_date}` : ""}
+              </div>
+            </div>
+          )}
+
+          {activeContext.dob_jobs && activeContext.dob_jobs.total_active > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 600, color: "#8b5cf6", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                DOB Jobs
+                <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#8b5cf6", display: "inline-block" }} title="DOB" />
+              </div>
+              <div style={{ fontSize: 10, color: "var(--brand-granite-gray)" }}>
+                {activeContext.dob_jobs.total_active} active job{activeContext.dob_jobs.total_active !== 1 ? "s" : ""}
+                {activeContext.dob_jobs.has_active_new_building ? " · New Building" : ""}
+                {activeContext.dob_jobs.has_active_alteration ? " · Alteration" : ""}
+              </div>
+              {activeContext.dob_jobs.active_jobs.slice(0, 3).map((j, i) => (
+                <div key={i} style={{ padding: "6px 8px", background: "var(--bg-elevated)", border: "1px solid var(--border-color)", borderLeft: "3px solid #8b5cf6", fontSize: 11 }}>
+                  <div style={{ fontWeight: 600, color: "var(--foreground)" }}>{j.job_type} · {j.job_status}</div>
+                  <div style={{ color: "var(--brand-granite-gray)", lineHeight: 1.5 }}>
+                    Job #{j.job_number}
+                    {j.initial_cost ? ` · ${fmtCurrency(j.initial_cost)}` : ""}
+                    {j.proposed_dwelling_units ? ` · ${j.proposed_dwelling_units} proposed units` : ""}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {activeContext.ecb_violations && activeContext.ecb_violations.open_violations > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 600, color: "#ec4899", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                ECB Violations
+                <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#ec4899", display: "inline-block" }} title="ECB" />
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 11 }}>
+                <Metric label="Open Violations" value={String(activeContext.ecb_violations.open_violations)} source="ecb" />
+                <Metric label="Balance Due" value={fmtCurrency(activeContext.ecb_violations.total_balance_due)} source="ecb" />
+              </div>
+              {activeContext.ecb_violations.most_recent_date && (
+                <div style={{ fontSize: 10, color: "var(--brand-granite-gray)" }}>
+                  Most recent: {activeContext.ecb_violations.most_recent_date}
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeContext.comparable_sales && activeContext.comparable_sales.total_found > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 600, color: "#06b6d4", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                Sales History
+                <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#06b6d4", display: "inline-block" }} title="Sales" />
+              </div>
+              {activeContext.comparable_sales.subject_sale && (
+                <div style={{ padding: "8px 10px", background: "var(--bg-elevated)", border: "1px solid var(--border-color)", borderLeft: "3px solid #06b6d4", fontSize: 11 }}>
+                  <div style={{ fontWeight: 600, color: "var(--foreground)" }}>Last Sale (Subject)</div>
+                  <div style={{ color: "var(--brand-granite-gray)", lineHeight: 1.5 }}>
+                    {activeContext.comparable_sales.subject_sale.sale_date?.slice(0, 10) ?? "N/A"}
+                    {activeContext.comparable_sales.subject_sale.sale_price ? ` · ${fmtCurrency(activeContext.comparable_sales.subject_sale.sale_price)}` : ""}
+                    {activeContext.comparable_sales.subject_sale.gross_square_feet ? ` · ${activeContext.comparable_sales.subject_sale.gross_square_feet.toLocaleString()} SF` : ""}
+                  </div>
+                </div>
+              )}
+              {activeContext.comparable_sales.comparable_sales.length > 0 && (
+                <div style={{ fontSize: 10, color: "var(--brand-granite-gray)" }}>
+                  {activeContext.comparable_sales.comparable_sales.length} block comparable{activeContext.comparable_sales.comparable_sales.length !== 1 ? "s" : ""} found
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeContext.hpd_litigations && activeContext.hpd_litigations.open_cases > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 600, color: "#dc2626", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                HPD Litigations
+                <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#dc2626", display: "inline-block" }} title="Litigation" />
+              </div>
+              <Metric label="Open Cases" value={String(activeContext.hpd_litigations.open_cases)} source="litigation" />
+              {activeContext.hpd_litigations.case_types.length > 0 && (
+                <div style={{ fontSize: 10, color: "var(--brand-granite-gray)" }}>
+                  Types: {activeContext.hpd_litigations.case_types.join(", ")}
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeContext.fdny_vacates && activeContext.fdny_vacates.total_vacate_orders > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 600, color: "#b91c1c", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                FDNY Vacate Orders
+                <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#b91c1c", display: "inline-block" }} title="FDNY" />
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 11 }}>
+                <Metric label="Active Orders" value={String(activeContext.fdny_vacates.active_vacate_orders)} source="fdny" />
+                <Metric label="Vacated Units" value={String(activeContext.fdny_vacates.vacated_units)} source="fdny" />
+              </div>
+            </div>
+          )}
         </div>
       ) : (
         <p style={{ margin: 0, fontSize: 12, color: "var(--brand-granite-gray)" }}>
@@ -580,6 +699,12 @@ const SOURCE_COLORS: Record<string, string> = {
   zoning: "#a78bfa",
   calc: "#3b82f6",
   acris: "#ef4444",
+  hpd: "#f97316",
+  dob: "#8b5cf6",
+  ecb: "#ec4899",
+  sales: "#06b6d4",
+  litigation: "#dc2626",
+  fdny: "#b91c1c",
 };
 
 function Metric({ label, value, source }: { label: string; value: string; source?: keyof typeof SOURCE_COLORS }) {

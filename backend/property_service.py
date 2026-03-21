@@ -4,13 +4,28 @@ Live NYC property lookup and normalized property-context builder.
 
 from __future__ import annotations
 
+import asyncio
 import re
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 import httpx
 
-from property_models import AcrisDocument, AcrisSummary, PropertyContext, PropertyLotRecord, PropertyScenario
+from property_models import (
+    AcrisDocument,
+    AcrisSummary,
+    ComparableSalesSummary,
+    DobJobRecord,
+    DobJobSummary,
+    DofSaleRecord,
+    EcbViolationSummary,
+    FdnyVacateSummary,
+    HpdLitigationSummary,
+    HpdViolationSummary,
+    PropertyContext,
+    PropertyLotRecord,
+    PropertyScenario,
+)
 from zoning_reference import get_overlay_far, get_zoning_info, infer_lot_type
 
 
@@ -20,6 +35,12 @@ GEOSEARCH_ENDPOINT = "https://geosearch.planninglabs.nyc/v2/search"
 ACRIS_MASTER_ENDPOINT = "https://data.cityofnewyork.us/resource/bnx9-e6tj.json"
 ACRIS_PARTIES_ENDPOINT = "https://data.cityofnewyork.us/resource/636b-3b5g.json"
 ACRIS_LEGALS_ENDPOINT = "https://data.cityofnewyork.us/resource/8h5j-fqxa.json"
+HPD_VIOLATIONS_ENDPOINT = "https://data.cityofnewyork.us/resource/wvxf-dwi5.json"
+DOB_JOBS_ENDPOINT = "https://data.cityofnewyork.us/resource/ic3t-wcy2.json"
+ECB_VIOLATIONS_ENDPOINT = "https://data.cityofnewyork.us/resource/6bgk-3dad.json"
+DOF_SALES_ENDPOINT = "https://data.cityofnewyork.us/resource/usep-8jbt.json"
+HPD_LITIGATIONS_ENDPOINT = "https://data.cityofnewyork.us/resource/59kj-x8nc.json"
+FDNY_VACATE_ENDPOINT = "https://data.cityofnewyork.us/resource/tb8q-a3ar.json"
 
 BOROUGH_ABBREV = {1: "MN", 2: "BX", 3: "BK", 4: "QN", 5: "SI"}
 BOROUGH_NAMES = {1: "Manhattan", 2: "Bronx", 3: "Brooklyn", 4: "Queens", 5: "Staten Island"}
@@ -465,6 +486,217 @@ class PropertyService:
 
         return summary
 
+    async def fetch_hpd_violations(self, borough: int, block: str, lot: str) -> HpdViolationSummary:
+        """Fetch HPD violation summary for a single lot."""
+        summary = HpdViolationSummary()
+        try:
+            async with httpx.AsyncClient(timeout=15.0, headers=_request_headers()) as client:
+                params = {
+                    "$where": (
+                        f"boroid='{borough}' AND block='{block}' AND lot='{lot}' "
+                        "AND currentstatus='Open'"
+                    ),
+                    "$select": "class,inspectiondate,rentimpairing",
+                    "$limit": 500,
+                }
+                resp = await client.get(HPD_VIOLATIONS_ENDPOINT, params=params)
+                resp.raise_for_status()
+                rows = resp.json()
+                for row in rows:
+                    cls = str(row.get("class", "")).upper()
+                    if cls == "A":
+                        summary.open_class_a += 1
+                    elif cls == "B":
+                        summary.open_class_b += 1
+                    elif cls == "C":
+                        summary.open_class_c += 1
+                    if str(row.get("rentimpairing", "")).upper() == "YES":
+                        summary.rent_impairing += 1
+                summary.total_open = summary.open_class_a + summary.open_class_b + summary.open_class_c
+                dates = [row.get("inspectiondate", "") for row in rows if row.get("inspectiondate")]
+                if dates:
+                    summary.most_recent_date = sorted(dates, reverse=True)[0][:10]
+        except (httpx.TimeoutException, Exception):
+            pass
+        return summary
+
+    async def fetch_dob_jobs(self, borough: int, block: str, lot: str) -> DobJobSummary:
+        """Fetch active DOB job applications for a single lot."""
+        summary = DobJobSummary()
+        try:
+            async with httpx.AsyncClient(timeout=15.0, headers=_request_headers()) as client:
+                params = {
+                    "$where": (
+                        f"borough='{borough}' AND block='{block.zfill(5)}' AND lot='{lot.zfill(4)}' "
+                        "AND job_status NOT IN('X CANCELLED','R DISAPPROVED')"
+                    ),
+                    "$select": "job__,job_type,job_status,initial_cost,proposed_dwelling_units,"
+                               "existing_dwelling_units,proposed_zoning_sqft",
+                    "$order": "latest_action_date DESC",
+                    "$limit": 20,
+                }
+                resp = await client.get(DOB_JOBS_ENDPOINT, params=params)
+                resp.raise_for_status()
+                rows = resp.json()
+                for row in rows:
+                    jtype = str(row.get("job_type", "")).strip()
+                    jstatus = str(row.get("job_status", "")).strip()
+                    rec = DobJobRecord(
+                        job_number=str(row.get("job__", "")),
+                        job_type=jtype,
+                        job_status=jstatus,
+                        initial_cost=_safe_float(row.get("initial_cost")) or None,
+                        proposed_dwelling_units=_safe_int(row.get("proposed_dwelling_units")) or None,
+                        existing_dwelling_units=_safe_int(row.get("existing_dwelling_units")) or None,
+                        proposed_zoning_sqft=_safe_float(row.get("proposed_zoning_sqft")) or None,
+                    )
+                    summary.active_jobs.append(rec)
+                    if jtype == "NB":
+                        summary.has_active_new_building = True
+                    if jtype in ("A1", "A2", "A3"):
+                        summary.has_active_alteration = True
+                summary.total_active = len(summary.active_jobs)
+        except (httpx.TimeoutException, Exception):
+            pass
+        return summary
+
+    async def fetch_ecb_violations(self, borough: int, block: str, lot: str) -> EcbViolationSummary:
+        """Fetch ECB/OATH violation summary for a single lot."""
+        summary = EcbViolationSummary()
+        try:
+            async with httpx.AsyncClient(timeout=15.0, headers=_request_headers()) as client:
+                params = {
+                    "$where": (
+                        f"boro='{borough}' AND block='{block}' AND lot='{lot}' "
+                        "AND hearing_status != 'RESOLVE'"
+                    ),
+                    "$select": "penality_imposed,amount_paid,balance_due,violation_date",
+                    "$limit": 200,
+                }
+                resp = await client.get(ECB_VIOLATIONS_ENDPOINT, params=params)
+                resp.raise_for_status()
+                rows = resp.json()
+                dates = []
+                for row in rows:
+                    summary.open_violations += 1
+                    summary.total_penalties += _safe_float(row.get("penality_imposed"))
+                    summary.total_balance_due += _safe_float(row.get("balance_due"))
+                    vdate = row.get("violation_date", "")
+                    if vdate:
+                        dates.append(vdate)
+                if dates:
+                    summary.most_recent_date = sorted(dates, reverse=True)[0][:10]
+        except (httpx.TimeoutException, Exception):
+            pass
+        return summary
+
+    async def fetch_comparable_sales(self, borough: int, block: str, lot: str) -> ComparableSalesSummary:
+        """Fetch DOF rolling sales for the subject lot and block comps."""
+        summary = ComparableSalesSummary()
+        try:
+            async with httpx.AsyncClient(timeout=15.0, headers=_request_headers()) as client:
+                # Subject lot sale
+                params = {
+                    "$where": f"borough='{borough}' AND block='{block}' AND lot='{lot}' AND sale_price > '0'",
+                    "$order": "sale_date DESC",
+                    "$limit": 1,
+                }
+                resp = await client.get(DOF_SALES_ENDPOINT, params=params)
+                resp.raise_for_status()
+                rows = resp.json()
+                if rows:
+                    r = rows[0]
+                    summary.subject_sale = DofSaleRecord(
+                        sale_price=_safe_float(r.get("sale_price")),
+                        sale_date=(r.get("sale_date") or "")[:10],
+                        building_class=r.get("building_class_at_time_of_sale", ""),
+                        residential_units=_safe_int(r.get("residential_units")),
+                        commercial_units=_safe_int(r.get("commercial_units")),
+                        total_units=_safe_int(r.get("total_units")),
+                        gross_square_feet=_safe_float(r.get("gross_square_feet")) or None,
+                    )
+
+                # Block comps (same block, exclude subject lot)
+                comp_params = {
+                    "$where": (
+                        f"borough='{borough}' AND block='{block}' AND lot!='{lot}' "
+                        "AND sale_price > '0'"
+                    ),
+                    "$order": "sale_date DESC",
+                    "$limit": 10,
+                }
+                comp_resp = await client.get(DOF_SALES_ENDPOINT, params=comp_params)
+                comp_resp.raise_for_status()
+                comp_rows = comp_resp.json()
+                for r in comp_rows:
+                    summary.comparable_sales.append(DofSaleRecord(
+                        sale_price=_safe_float(r.get("sale_price")),
+                        sale_date=(r.get("sale_date") or "")[:10],
+                        building_class=r.get("building_class_at_time_of_sale", ""),
+                        residential_units=_safe_int(r.get("residential_units")),
+                        commercial_units=_safe_int(r.get("commercial_units")),
+                        total_units=_safe_int(r.get("total_units")),
+                        gross_square_feet=_safe_float(r.get("gross_square_feet")) or None,
+                    ))
+                summary.total_found = (1 if summary.subject_sale else 0) + len(summary.comparable_sales)
+        except (httpx.TimeoutException, Exception):
+            pass
+        return summary
+
+    async def fetch_hpd_litigations(self, borough: int, block: str, lot: str) -> HpdLitigationSummary:
+        """Fetch HPD litigation cases for a single lot."""
+        summary = HpdLitigationSummary()
+        try:
+            async with httpx.AsyncClient(timeout=15.0, headers=_request_headers()) as client:
+                params = {
+                    "$where": f"boroid='{borough}' AND block='{block}' AND lot='{lot}' AND casestatus='OPEN'",
+                    "$select": "casetype,caseopendate",
+                    "$limit": 50,
+                }
+                resp = await client.get(HPD_LITIGATIONS_ENDPOINT, params=params)
+                resp.raise_for_status()
+                rows = resp.json()
+                types = set()
+                dates = []
+                for row in rows:
+                    summary.open_cases += 1
+                    ct = row.get("casetype", "")
+                    if ct:
+                        types.add(ct)
+                    d = row.get("caseopendate", "")
+                    if d:
+                        dates.append(d)
+                summary.case_types = sorted(types)
+                if dates:
+                    summary.most_recent_date = sorted(dates, reverse=True)[0][:10]
+        except (httpx.TimeoutException, Exception):
+            pass
+        return summary
+
+    async def fetch_fdny_vacates(self, borough: int, block: str, lot: str) -> FdnyVacateSummary:
+        """Fetch FDNY vacate orders for a single lot."""
+        summary = FdnyVacateSummary()
+        bbl = f"{borough}{block.zfill(5)}{lot.zfill(4)}"
+        try:
+            async with httpx.AsyncClient(timeout=15.0, headers=_request_headers()) as client:
+                params = {
+                    "$where": f"bbl='{bbl}'",
+                    "$select": "vacate_type,number_of_vacated_units,last_disposition_date_time",
+                    "$limit": 50,
+                }
+                resp = await client.get(FDNY_VACATE_ENDPOINT, params=params)
+                resp.raise_for_status()
+                rows = resp.json()
+                for row in rows:
+                    summary.total_vacate_orders += 1
+                    vtype = str(row.get("vacate_type", "")).upper()
+                    if "RESC" not in vtype:
+                        summary.active_vacate_orders += 1
+                    summary.vacated_units += _safe_int(row.get("number_of_vacated_units"))
+        except (httpx.TimeoutException, Exception):
+            pass
+        return summary
+
     async def build_property_context(self, primary_bbl: str, adjacent_bbls: list[str] | None = None) -> PropertyContext:
         adjacent_bbls = adjacent_bbls or []
         primary_clean = normalize_bbl(primary_bbl)
@@ -531,6 +763,35 @@ class PropertyService:
         acris_summary = await self.fetch_acris(primary_borough, primary_block, primary_lot)
         if acris_summary.documents:
             lots_detail[0].has_acris = True
+
+        # Fetch all additional data sources in parallel
+        (
+            hpd_violations,
+            dob_jobs,
+            ecb_violations,
+            comparable_sales,
+            hpd_litigations,
+            fdny_vacates,
+        ) = await asyncio.gather(
+            self.fetch_hpd_violations(primary_borough, primary_block, primary_lot),
+            self.fetch_dob_jobs(primary_borough, primary_block, primary_lot),
+            self.fetch_ecb_violations(primary_borough, primary_block, primary_lot),
+            self.fetch_comparable_sales(primary_borough, primary_block, primary_lot),
+            self.fetch_hpd_litigations(primary_borough, primary_block, primary_lot),
+            self.fetch_fdny_vacates(primary_borough, primary_block, primary_lot),
+        )
+        if hpd_violations.total_open:
+            lots_detail[0].has_hpd = True
+        if dob_jobs.total_active:
+            lots_detail[0].has_dob = True
+        if ecb_violations.open_violations:
+            lots_detail[0].has_ecb = True
+        if comparable_sales.total_found:
+            lots_detail[0].has_sales = True
+        if hpd_litigations.open_cases:
+            lots_detail[0].has_litigation = True
+        if fdny_vacates.total_vacate_orders:
+            lots_detail[0].has_fdny = True
         combined_building_area = sum(item.building_area for item in lots_detail)
         combined_units_total = sum(item.units_total for item in lots_detail)
         aggregated_assessed = sum(item.assessed_value or 0 for item in lots_detail) or None
@@ -576,11 +837,23 @@ class PropertyService:
             scenarios=_calculate_all_scenarios(combined_lot_area, _safe_float(standard_far), _safe_float(qah_far)),
             lots_detail=lots_detail,
             acris_summary=acris_summary if acris_summary.documents else None,
+            hpd_violations=hpd_violations if hpd_violations.total_open else None,
+            dob_jobs=dob_jobs if dob_jobs.total_active else None,
+            ecb_violations=ecb_violations if ecb_violations.open_violations else None,
+            comparable_sales=comparable_sales if comparable_sales.total_found else None,
+            hpd_litigations=hpd_litigations if hpd_litigations.open_cases else None,
+            fdny_vacates=fdny_vacates if fdny_vacates.total_vacate_orders else None,
             sources={
                 "pluto_endpoint": PLUTO_ENDPOINT,
                 "dof_endpoint": DOF_VALUATION_ENDPOINT,
                 "acris_legals_endpoint": ACRIS_LEGALS_ENDPOINT,
                 "acris_master_endpoint": ACRIS_MASTER_ENDPOINT,
+                "hpd_violations_endpoint": HPD_VIOLATIONS_ENDPOINT,
+                "dob_jobs_endpoint": DOB_JOBS_ENDPOINT,
+                "ecb_violations_endpoint": ECB_VIOLATIONS_ENDPOINT,
+                "dof_sales_endpoint": DOF_SALES_ENDPOINT,
+                "hpd_litigations_endpoint": HPD_LITIGATIONS_ENDPOINT,
+                "fdny_vacate_endpoint": FDNY_VACATE_ENDPOINT,
                 "zoning_reference": "local_nyc_zoning_reference",
                 "street_type_assumption": "narrow",
                 "generated_at": _utc_now_iso(),
@@ -605,6 +878,88 @@ class PropertyService:
             lines.append(f"Total recorded mortgage amount: ${a.total_mortgage_amount:,.0f}.\n")
         lines.append(f"Total ACRIS documents found: {len(a.documents)}.\n")
         return "".join(lines)
+
+    def _build_hpd_brief(self, context: PropertyContext) -> str:
+        if not context.hpd_violations:
+            return ""
+        v = context.hpd_violations
+        lines = [
+            "HPD VIOLATIONS\n",
+            f"Open violations: {v.total_open} (Class A: {v.open_class_a}, B: {v.open_class_b}, C: {v.open_class_c}).\n",
+        ]
+        if v.rent_impairing:
+            lines.append(f"Rent-impairing violations: {v.rent_impairing}.\n")
+        if v.most_recent_date:
+            lines.append(f"Most recent inspection: {v.most_recent_date}.\n")
+        return "".join(lines)
+
+    def _build_dob_brief(self, context: PropertyContext) -> str:
+        if not context.dob_jobs:
+            return ""
+        d = context.dob_jobs
+        lines = [f"DOB JOB APPLICATIONS\nActive jobs: {d.total_active}."]
+        if d.has_active_new_building:
+            lines.append(" Includes active New Building application.")
+        if d.has_active_alteration:
+            lines.append(" Includes active Alteration application.")
+        lines.append("\n")
+        for j in d.active_jobs[:5]:
+            cost_str = f"${j.initial_cost:,.0f}" if j.initial_cost else "N/A"
+            lines.append(f"- Job {j.job_number}: type={j.job_type}, status={j.job_status}, cost={cost_str}")
+            if j.proposed_dwelling_units:
+                lines.append(f", proposed units={j.proposed_dwelling_units}")
+            lines.append(".\n")
+        return "".join(lines)
+
+    def _build_ecb_brief(self, context: PropertyContext) -> str:
+        if not context.ecb_violations:
+            return ""
+        e = context.ecb_violations
+        lines = [
+            "ECB/OATH VIOLATIONS\n",
+            f"Open violations: {e.open_violations}. ",
+            f"Total penalties: ${e.total_penalties:,.0f}. Balance due: ${e.total_balance_due:,.0f}.\n",
+        ]
+        if e.most_recent_date:
+            lines.append(f"Most recent: {e.most_recent_date}.\n")
+        return "".join(lines)
+
+    def _build_sales_brief(self, context: PropertyContext) -> str:
+        if not context.comparable_sales:
+            return ""
+        s = context.comparable_sales
+        lines = ["DOF ROLLING SALES\n"]
+        if s.subject_sale:
+            price = f"${s.subject_sale.sale_price:,.0f}" if s.subject_sale.sale_price else "N/A"
+            lines.append(f"Subject lot last sale: {s.subject_sale.sale_date or 'N/A'}, price {price}.\n")
+        if s.comparable_sales:
+            lines.append(f"Block comparables ({len(s.comparable_sales)} found):\n")
+            for c in s.comparable_sales[:5]:
+                price = f"${c.sale_price:,.0f}" if c.sale_price else "N/A"
+                sqft = f"{c.gross_square_feet:,.0f} SF" if c.gross_square_feet else "N/A"
+                lines.append(f"- {c.sale_date or 'N/A'}: {price}, {sqft}, {c.total_units} units.\n")
+        return "".join(lines)
+
+    def _build_litigation_brief(self, context: PropertyContext) -> str:
+        if not context.hpd_litigations:
+            return ""
+        l = context.hpd_litigations
+        types_str = ", ".join(l.case_types) if l.case_types else "N/A"
+        return (
+            "HPD LITIGATIONS\n"
+            f"Open cases: {l.open_cases}. Types: {types_str}. "
+            f"Most recent: {l.most_recent_date or 'N/A'}.\n"
+        )
+
+    def _build_fdny_brief(self, context: PropertyContext) -> str:
+        if not context.fdny_vacates:
+            return ""
+        f = context.fdny_vacates
+        return (
+            "FDNY VACATE ORDERS\n"
+            f"Total orders: {f.total_vacate_orders}. Active: {f.active_vacate_orders}. "
+            f"Vacated units: {f.vacated_units}.\n"
+        )
 
     def build_property_brief(self, context: PropertyContext) -> str:
         lot_lines = []
@@ -653,6 +1008,12 @@ class PropertyService:
             f"Combined market value: {f'${context.market_value:,.0f}' if context.market_value else 'N/A'}.\n"
             f"Combined taxable value: {f'${context.dof_taxable:,.0f}' if context.dof_taxable else 'N/A'}.\n"
             + self._build_acris_brief(context)
+            + self._build_hpd_brief(context)
+            + self._build_dob_brief(context)
+            + self._build_ecb_brief(context)
+            + self._build_sales_brief(context)
+            + self._build_litigation_brief(context)
+            + self._build_fdny_brief(context)
             + "LOT DETAILS\n"
             + "\n".join(lot_lines)
             + "\nSCENARIO CANDIDATES\n"

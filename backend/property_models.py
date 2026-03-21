@@ -49,6 +49,67 @@ class AcrisSummary(BaseModel):
     open_liens: int = 0
 
 
+class HpdViolationSummary(BaseModel):
+    open_class_a: int = 0
+    open_class_b: int = 0
+    open_class_c: int = 0
+    total_open: int = 0
+    rent_impairing: int = 0
+    most_recent_date: Optional[str] = None
+
+
+class DobJobRecord(BaseModel):
+    job_number: str = ""
+    job_type: str = ""
+    job_status: str = ""
+    initial_cost: Optional[float] = None
+    proposed_dwelling_units: Optional[int] = None
+    existing_dwelling_units: Optional[int] = None
+    proposed_zoning_sqft: Optional[float] = None
+
+
+class DobJobSummary(BaseModel):
+    active_jobs: list[DobJobRecord] = Field(default_factory=list)
+    has_active_new_building: bool = False
+    has_active_alteration: bool = False
+    total_active: int = 0
+
+
+class EcbViolationSummary(BaseModel):
+    open_violations: int = 0
+    total_penalties: float = 0
+    total_balance_due: float = 0
+    most_recent_date: Optional[str] = None
+
+
+class DofSaleRecord(BaseModel):
+    sale_price: Optional[float] = None
+    sale_date: Optional[str] = None
+    building_class: str = ""
+    residential_units: int = 0
+    commercial_units: int = 0
+    total_units: int = 0
+    gross_square_feet: Optional[float] = None
+
+
+class ComparableSalesSummary(BaseModel):
+    subject_sale: Optional[DofSaleRecord] = None
+    comparable_sales: list[DofSaleRecord] = Field(default_factory=list)
+    total_found: int = 0
+
+
+class HpdLitigationSummary(BaseModel):
+    open_cases: int = 0
+    case_types: list[str] = Field(default_factory=list)
+    most_recent_date: Optional[str] = None
+
+
+class FdnyVacateSummary(BaseModel):
+    total_vacate_orders: int = 0
+    active_vacate_orders: int = 0
+    vacated_units: int = 0
+
+
 class ValidatedLotInfo(BaseModel):
     bbl: str
     address: str
@@ -113,6 +174,12 @@ class PropertyLotRecord(BaseModel):
     has_pluto: bool = False
     has_dof: bool = False
     has_acris: bool = False
+    has_hpd: bool = False
+    has_dob: bool = False
+    has_ecb: bool = False
+    has_sales: bool = False
+    has_litigation: bool = False
+    has_fdny: bool = False
     lot_type_code: Optional[int] = None
     lot_type: str = "unknown"
     raw: dict[str, Any] = Field(default_factory=dict)
@@ -148,5 +215,11 @@ class PropertyContext(BaseModel):
     scenarios: list[PropertyScenario] = Field(default_factory=list)
     lots_detail: list[PropertyLotRecord] = Field(default_factory=list)
     acris_summary: Optional[AcrisSummary] = None
+    hpd_violations: Optional[HpdViolationSummary] = None
+    dob_jobs: Optional[DobJobSummary] = None
+    ecb_violations: Optional[EcbViolationSummary] = None
+    comparable_sales: Optional[ComparableSalesSummary] = None
+    hpd_litigations: Optional[HpdLitigationSummary] = None
+    fdny_vacates: Optional[FdnyVacateSummary] = None
     sources: dict[str, Any] = Field(default_factory=dict)
     property_brief: str = ""
