@@ -196,6 +196,26 @@ export interface PropertyScenario {
   notes: string[];
 }
 
+export interface AcrisDocument {
+  document_id: string;
+  doc_type: string;
+  doc_date?: string | null;
+  recorded_filed?: string | null;
+  doc_amount?: number | null;
+  party1: string;
+  party2: string;
+}
+
+export interface AcrisSummary {
+  documents: AcrisDocument[];
+  last_deed_date?: string | null;
+  last_deed_amount?: number | null;
+  last_deed_buyer: string;
+  last_deed_seller: string;
+  total_mortgage_amount?: number | null;
+  open_liens: number;
+}
+
 export interface PropertyLotRecord {
   bbl: string;
   borough: string;
@@ -215,6 +235,7 @@ export interface PropertyLotRecord {
   dof_taxable?: number | null;
   has_pluto: boolean;
   has_dof: boolean;
+  has_acris: boolean;
   lot_type_code?: number | null;
   lot_type: string;
 }
@@ -248,6 +269,7 @@ export interface PropertyContext {
   dof_taxable?: number | null;
   scenarios: PropertyScenario[];
   lots_detail: PropertyLotRecord[];
+  acris_summary?: AcrisSummary | null;
   sources: Record<string, unknown>;
   property_brief: string;
 }

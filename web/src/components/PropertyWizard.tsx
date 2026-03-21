@@ -373,6 +373,7 @@ export default function PropertyWizard({
             <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#f59e0b", display: "inline-block" }} /> DOF</span>
             <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#a78bfa", display: "inline-block" }} /> Zoning Ref</span>
             <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#3b82f6", display: "inline-block" }} /> Calculated</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#ef4444", display: "inline-block" }} /> ACRIS</span>
             <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#22c55e", display: "inline-block" }} /> Documents</span>
           </div>
 
@@ -534,6 +535,35 @@ export default function PropertyWizard({
               ))}
             </div>
           )}
+
+          {activeContext.acris_summary && activeContext.acris_summary.documents.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 600, color: "#ef4444", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                ACRIS Transactions
+                <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#ef4444", display: "inline-block" }} title="ACRIS" />
+              </div>
+              {activeContext.acris_summary.last_deed_date && (
+                <div style={{ padding: "8px 10px", background: "var(--bg-elevated)", border: "1px solid var(--border-color)", borderLeft: "3px solid #ef4444", fontSize: 11 }}>
+                  <div style={{ fontWeight: 600, color: "var(--foreground)" }}>Last Deed</div>
+                  <div style={{ color: "var(--brand-granite-gray)", lineHeight: 1.5 }}>
+                    {activeContext.acris_summary.last_deed_date?.slice(0, 10)}
+                    {activeContext.acris_summary.last_deed_amount ? ` · ${fmtCurrency(activeContext.acris_summary.last_deed_amount)}` : ""}
+                  </div>
+                  {activeContext.acris_summary.last_deed_seller && (
+                    <div style={{ color: "var(--brand-granite-gray)", lineHeight: 1.5 }}>
+                      {activeContext.acris_summary.last_deed_seller} → {activeContext.acris_summary.last_deed_buyer}
+                    </div>
+                  )}
+                </div>
+              )}
+              {activeContext.acris_summary.total_mortgage_amount ? (
+                <Metric label="Total Mortgages" value={fmtCurrency(activeContext.acris_summary.total_mortgage_amount)} source="acris" />
+              ) : null}
+              <div style={{ fontSize: 10, color: "var(--brand-granite-gray)" }}>
+                {activeContext.acris_summary.documents.length} document{activeContext.acris_summary.documents.length !== 1 ? "s" : ""} from ACRIS
+              </div>
+            </div>
+          )}
         </div>
       ) : (
         <p style={{ margin: 0, fontSize: 12, color: "var(--brand-granite-gray)" }}>
@@ -549,6 +579,7 @@ const SOURCE_COLORS: Record<string, string> = {
   dof: "#f59e0b",
   zoning: "#a78bfa",
   calc: "#3b82f6",
+  acris: "#ef4444",
 };
 
 function Metric({ label, value, source }: { label: string; value: string; source?: keyof typeof SOURCE_COLORS }) {

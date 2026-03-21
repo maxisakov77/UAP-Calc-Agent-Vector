@@ -29,6 +29,26 @@ class PropertySearchResponse(BaseModel):
     query: str = ""
 
 
+class AcrisDocument(BaseModel):
+    document_id: str = ""
+    doc_type: str = ""
+    doc_date: Optional[str] = None
+    recorded_filed: Optional[str] = None
+    doc_amount: Optional[float] = None
+    party1: str = ""
+    party2: str = ""
+
+
+class AcrisSummary(BaseModel):
+    documents: list[AcrisDocument] = Field(default_factory=list)
+    last_deed_date: Optional[str] = None
+    last_deed_amount: Optional[float] = None
+    last_deed_buyer: str = ""
+    last_deed_seller: str = ""
+    total_mortgage_amount: Optional[float] = None
+    open_liens: int = 0
+
+
 class ValidatedLotInfo(BaseModel):
     bbl: str
     address: str
@@ -92,6 +112,7 @@ class PropertyLotRecord(BaseModel):
     dof_taxable: Optional[float] = None
     has_pluto: bool = False
     has_dof: bool = False
+    has_acris: bool = False
     lot_type_code: Optional[int] = None
     lot_type: str = "unknown"
     raw: dict[str, Any] = Field(default_factory=dict)
@@ -126,5 +147,6 @@ class PropertyContext(BaseModel):
     dof_taxable: Optional[float] = None
     scenarios: list[PropertyScenario] = Field(default_factory=list)
     lots_detail: list[PropertyLotRecord] = Field(default_factory=list)
+    acris_summary: Optional[AcrisSummary] = None
     sources: dict[str, Any] = Field(default_factory=dict)
     property_brief: str = ""

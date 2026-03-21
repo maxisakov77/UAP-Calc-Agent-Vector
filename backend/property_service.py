@@ -10,13 +10,16 @@ from typing import Any, Optional
 
 import httpx
 
-from property_models import PropertyContext, PropertyLotRecord, PropertyScenario
+from property_models import AcrisDocument, AcrisSummary, PropertyContext, PropertyLotRecord, PropertyScenario
 from zoning_reference import get_overlay_far, get_zoning_info, infer_lot_type
 
 
 PLUTO_ENDPOINT = "https://data.cityofnewyork.us/resource/64uk-42ks.json"
 DOF_VALUATION_ENDPOINT = "https://data.cityofnewyork.us/resource/8y4t-faws.json"
 GEOSEARCH_ENDPOINT = "https://geosearch.planninglabs.nyc/v2/search"
+ACRIS_MASTER_ENDPOINT = "https://data.cityofnewyork.us/resource/bnx9-e6tj.json"
+ACRIS_PARTIES_ENDPOINT = "https://data.cityofnewyork.us/resource/636b-3b5g.json"
+ACRIS_LEGALS_ENDPOINT = "https://data.cityofnewyork.us/resource/8h5j-fqxa.json"
 
 BOROUGH_ABBREV = {1: "MN", 2: "BX", 3: "BK", 4: "QN", 5: "SI"}
 BOROUGH_NAMES = {1: "Manhattan", 2: "Bronx", 3: "Brooklyn", 4: "Queens", 5: "Staten Island"}
@@ -358,6 +361,110 @@ class PropertyService:
 
         return result
 
+    async def fetch_acris(self, borough: int, block: str, lot: str) -> AcrisSummary:
+        """Fetch ACRIS deed/mortgage records for a single lot."""
+        summary = AcrisSummary()
+        try:
+            async with httpx.AsyncClient(timeout=15.0, headers=_request_headers()) as client:
+                # Step 1: find document IDs from the legals table for this lot
+                legals_params = {
+                    "$where": (
+                        f"borough='{borough}' AND block={int(block)} AND lot={int(lot)}"
+                    ),
+                    "$select": "document_id",
+                    "$limit": 200,
+                }
+                legals_resp = await client.get(ACRIS_LEGALS_ENDPOINT, params=legals_params)
+                legals_resp.raise_for_status()
+                legals_rows = legals_resp.json()
+                if not legals_rows:
+                    return summary
+                doc_ids = list({row["document_id"] for row in legals_rows if row.get("document_id")})
+                if not doc_ids:
+                    return summary
+
+                # Step 2: fetch master records for those document IDs
+                # Focus on deeds & mortgages only, most recent first
+                id_list = ",".join(f"'{did}'" for did in doc_ids[:100])
+                master_params = {
+                    "$where": (
+                        f"document_id in({id_list}) AND "
+                        "doc_type in('DEED','DEED, RP TO CONDO','MTGE','AGMT','ASST','CNTR','LEAS','RPTT','CORRP')"
+                    ),
+                    "$order": "doc_date DESC",
+                    "$limit": 50,
+                }
+                master_resp = await client.get(ACRIS_MASTER_ENDPOINT, params=master_params)
+                master_resp.raise_for_status()
+                master_rows = master_resp.json()
+                if not master_rows:
+                    return summary
+
+                master_by_id = {row["document_id"]: row for row in master_rows}
+
+                # Step 3: fetch parties for those document IDs
+                master_id_list = ",".join(f"'{did}'" for did in master_by_id.keys())
+                parties_params = {
+                    "$where": f"document_id in({master_id_list})",
+                    "$limit": 500,
+                }
+                parties_resp = await client.get(ACRIS_PARTIES_ENDPOINT, params=parties_params)
+                parties_resp.raise_for_status()
+                parties_rows = parties_resp.json()
+
+                # Group parties by document_id and party_type
+                parties_by_doc: dict[str, dict[str, list[str]]] = {}
+                for p in parties_rows:
+                    did = p.get("document_id", "")
+                    ptype = str(p.get("party_type", "")).strip()
+                    name = p.get("name", "")
+                    if did and name:
+                        parties_by_doc.setdefault(did, {}).setdefault(ptype, []).append(name)
+
+                # Build documents
+                total_mortgage = 0.0
+                docs: list[AcrisDocument] = []
+                for m in master_rows:
+                    did = m.get("document_id", "")
+                    parties = parties_by_doc.get(did, {})
+                    # party_type "1" = grantor/seller/borrower, "2" = grantee/buyer/lender
+                    party1_names = parties.get("1", [])
+                    party2_names = parties.get("2", [])
+                    amount = _safe_float(m.get("doc_amount"))
+                    doc_type = m.get("doc_type", "")
+
+                    docs.append(AcrisDocument(
+                        document_id=did,
+                        doc_type=doc_type,
+                        doc_date=m.get("doc_date"),
+                        recorded_filed=m.get("recorded_datetime"),
+                        doc_amount=amount if amount > 0 else None,
+                        party1="; ".join(party1_names[:3]),
+                        party2="; ".join(party2_names[:3]),
+                    ))
+
+                    if doc_type in ("MTGE",) and amount > 0:
+                        total_mortgage += amount
+
+                summary.documents = docs[:20]  # cap at 20 most recent
+                summary.total_mortgage_amount = total_mortgage if total_mortgage > 0 else None
+
+                # Find most recent deed
+                for doc in docs:
+                    if doc.doc_type and "DEED" in doc.doc_type:
+                        summary.last_deed_date = doc.doc_date
+                        summary.last_deed_amount = doc.doc_amount
+                        summary.last_deed_seller = doc.party1
+                        summary.last_deed_buyer = doc.party2
+                        break
+
+        except httpx.TimeoutException:
+            pass
+        except Exception:
+            pass
+
+        return summary
+
     async def build_property_context(self, primary_bbl: str, adjacent_bbls: list[str] | None = None) -> PropertyContext:
         adjacent_bbls = adjacent_bbls or []
         primary_clean = normalize_bbl(primary_bbl)
@@ -419,6 +526,11 @@ class PropertyService:
 
         primary = lots_detail[0]
         combined_lot_area = sum(item.lot_area for item in lots_detail)
+
+        # Fetch ACRIS records for the primary lot
+        acris_summary = await self.fetch_acris(primary_borough, primary_block, primary_lot)
+        if acris_summary.documents:
+            lots_detail[0].has_acris = True
         combined_building_area = sum(item.building_area for item in lots_detail)
         combined_units_total = sum(item.units_total for item in lots_detail)
         aggregated_assessed = sum(item.assessed_value or 0 for item in lots_detail) or None
@@ -463,9 +575,12 @@ class PropertyService:
             dof_taxable=aggregated_taxable,
             scenarios=_calculate_all_scenarios(combined_lot_area, _safe_float(standard_far), _safe_float(qah_far)),
             lots_detail=lots_detail,
+            acris_summary=acris_summary if acris_summary.documents else None,
             sources={
                 "pluto_endpoint": PLUTO_ENDPOINT,
                 "dof_endpoint": DOF_VALUATION_ENDPOINT,
+                "acris_legals_endpoint": ACRIS_LEGALS_ENDPOINT,
+                "acris_master_endpoint": ACRIS_MASTER_ENDPOINT,
                 "zoning_reference": "local_nyc_zoning_reference",
                 "street_type_assumption": "narrow",
                 "generated_at": _utc_now_iso(),
@@ -474,6 +589,22 @@ class PropertyService:
         )
         context.property_brief = self.build_property_brief(context)
         return context
+
+    def _build_acris_brief(self, context: PropertyContext) -> str:
+        if not context.acris_summary or not context.acris_summary.documents:
+            return ""
+        a = context.acris_summary
+        lines = ["ACRIS TRANSACTION HISTORY\n"]
+        if a.last_deed_date:
+            lines.append(
+                f"Last deed: {a.last_deed_date[:10] if a.last_deed_date else 'N/A'}, "
+                f"amount {f'${a.last_deed_amount:,.0f}' if a.last_deed_amount else 'N/A'}, "
+                f"seller {a.last_deed_seller or 'N/A'}, buyer {a.last_deed_buyer or 'N/A'}.\n"
+            )
+        if a.total_mortgage_amount:
+            lines.append(f"Total recorded mortgage amount: ${a.total_mortgage_amount:,.0f}.\n")
+        lines.append(f"Total ACRIS documents found: {len(a.documents)}.\n")
+        return "".join(lines)
 
     def build_property_brief(self, context: PropertyContext) -> str:
         lot_lines = []
@@ -521,7 +652,8 @@ class PropertyService:
             f"Combined assessed value: {f'${context.assessed_value:,.0f}' if context.assessed_value else 'N/A'}.\n"
             f"Combined market value: {f'${context.market_value:,.0f}' if context.market_value else 'N/A'}.\n"
             f"Combined taxable value: {f'${context.dof_taxable:,.0f}' if context.dof_taxable else 'N/A'}.\n"
-            "LOT DETAILS\n"
+            + self._build_acris_brief(context)
+            + "LOT DETAILS\n"
             + "\n".join(lot_lines)
             + "\nSCENARIO CANDIDATES\n"
             + "\n".join(scenario_lines)
