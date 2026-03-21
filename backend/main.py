@@ -1087,7 +1087,14 @@ async def extract_underwriting_values():
     stats = idx.describe_index_stats()
     ns = stats.get("namespaces", {})
     knowledge_count = ns.get(NAMESPACE_KNOWLEDGE, {}).get("vector_count", 0)
-    if knowledge_count == 0:
+
+    # Fetch live property context (if any)
+    property_context = _get_active_property_context()
+    property_brief_chunk: str | None = None
+    if property_context and property_context.property_brief:
+        property_brief_chunk = f"[Source: NYC Live Property Data]\n{property_context.property_brief}"
+
+    if knowledge_count == 0 and not property_brief_chunk:
         return {"updates": {}, "message": "No documents uploaded. Upload source documents first."}
 
     wb = openpyxl.load_workbook(io.BytesIO(_template_store["current"]["bytes"]), data_only=True)
@@ -1238,6 +1245,11 @@ async def extract_underwriting_values():
 
         source_chunks, source_name_lookup = _select_diversified_source_chunks(all_matches)
 
+        # Prepend live property data as an additional source
+        if property_brief_chunk:
+            source_chunks.insert(0, property_brief_chunk)
+            source_name_lookup["nyc live property data"] = "NYC Live Property Data"
+
         if not source_chunks:
             logging.info(f"  ⏭ Skipping sheet '{name}' (no source chunks)")
             continue
@@ -1293,10 +1305,14 @@ async def extract_underwriting_values():
             sys_msg = (
                 "You are an expert NYC real estate underwriting analyst.  You read source documents "
                 "(rent rolls, T-12 operating statements, appraisals, offering memorandums, tax bills, "
-                "surveys, environmental reports, financial projections) and populate underwriting "
+                "surveys, environmental reports, financial projections) and live NYC property data "
+                "(PLUTO, DOF valuations, ACRIS transactions, HPD violations, DOB jobs, ECB violations, "
+                "DOF comparable sales, HPD litigations, FDNY vacate orders) and populate underwriting "
                 "spreadsheet cells.  The SOURCE DOCUMENTS are the single source of truth — if a cell "
                 "already has a value marked [current], you MUST overwrite it with the value from the "
-                "source documents.  Use column headers and row labels to determine which value belongs "
+                "source documents.  Live property data (source 'NYC Live Property Data') is authoritative "
+                "for property info, zoning, valuations, taxes, violations, and transaction history.  "
+                "Use column headers and row labels to determine which value belongs "
                 "in which cell.  Return only valid JSON.\n\n" + glossary_context
             )
 
